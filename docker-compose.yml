@@ -1,0 +1,37 @@
+services:
+  devchain:
+    build:
+      context: .
+      dockerfile: apps/local-app/Dockerfile
+    image: devchain:latest
+    container_name: devchain
+    ports:
+      - "3001:3000"
+    volumes:
+      - devchain-data:/home/node/.devchain
+      - devchain-claude:/home/node/.claude
+      - devchain-codex:/home/node/.codex
+      - devchain-gemini:/home/node/.gemini
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - PORT=3000
+      - TEMPLATES_DIR=/app/apps/local-app/dist/templates
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  devchain-data:
+    driver: local
+  devchain-claude:
+    driver: local
+  devchain-codex:
+    driver: local
+  devchain-gemini:
+    driver: local

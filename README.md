@@ -106,6 +106,31 @@ On first run, import a template from the project page to provision your agent te
 
 ---
 
+## Docker Support
+
+Devchain can also run via Docker Compose for containerized deployment:
+
+```bash
+# Build and start the container
+docker compose up -d
+
+# View logs
+docker compose logs -f devchain
+
+# Stop the container
+docker compose down
+```
+
+Access the application at `http://localhost:3001` (or your configured port).
+
+See [docs/docker.md](docs/docker.md) for detailed Docker documentation including:
+- Configuration options
+- Volume management
+- Environment variables
+- Troubleshooting
+
+---
+
 ## License
 
 [Elastic License 2.0](LICENSE) — Free to use. You may not provide this software as a managed service or competing commercial offering.

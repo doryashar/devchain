@@ -19,3 +19,7 @@ packages/shared/src/**/*.js.map
 .claude
 # Test coverage
 coverage/
+*.md
+package-lock.json
+*.log
+.gitignore
