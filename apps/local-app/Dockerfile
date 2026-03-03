@@ -53,6 +53,7 @@ WORKDIR /app/apps/local-app
 ARG CLAUDE_CODE_VERSION=2.1.47
 ARG CODEX_VERSION=0.104.0
 ARG GEMINI_CLI_VERSION=0.29.5
+ARG OPENCODE_VERSION=1.2.14
 
 # Runtime system dependencies required by local-app
 RUN apt-get update \
@@ -71,7 +72,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
     && chmod 0440 /etc/sudoers.d/node \
-    && mkdir -p /home/node/.claude /home/node/.codex /home/node/.gemini /home/node/.devchain \
+    && mkdir -p /home/node/.claude /home/node/.codex /home/node/.gemini /home/node/.opencode /home/node/.devchain \
     && chown -R node:node /home/node \
     && printf '{\n  "hasCompletedOnboarding": true,\n  "autoCompactEnabled": true,\n  "effortCalloutDismissed": true\n}\n' > /home/node/.claude.json \
     && printf '{\n  "skipDangerousModePermissionPrompt": true,\n  "env": {\n    "DISABLE_AUTOUPDATER": "1"\n  }\n}\n' > /home/node/.claude/settings.json \
@@ -88,10 +89,11 @@ ENV PATH=/home/node/.local/bin:${PATH}
 
 RUN su - node -c "curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}"
 
-RUN npm install -g @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} \
+RUN npm install -g @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} opencode-ai@${OPENCODE_VERSION} \
     && claude --version \
     && codex --version \
     && gemini --version \
+    && opencode --version \
     && docker --version \
     && docker compose version \
     && npm cache clean --force

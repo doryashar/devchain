@@ -9,9 +9,10 @@ services:
       - "3001:3000"
     volumes:
       - devchain-data:/home/node/.devchain
-      - devchain-claude:/home/node/.claude
-      - devchain-codex:/home/node/.codex
-      - devchain-gemini:/home/node/.gemini
+      - ${HOME}/.claude:/home/node/.claude
+      - ${HOME}/.codex:/home/node/.codex
+      - ${HOME}/.gemini:/home/node/.gemini
+      - ${HOME}/.opencode:/home/node/.opencode
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - NODE_ENV=production
@@ -28,10 +29,4 @@ services:
 
 volumes:
   devchain-data:
-    driver: local
-  devchain-claude:
-    driver: local
-  devchain-codex:
-    driver: local
-  devchain-gemini:
     driver: local
