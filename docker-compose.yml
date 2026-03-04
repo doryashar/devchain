@@ -9,10 +9,11 @@ services:
       - "3001:3000"
     volumes:
       - devchain-data:/home/node/.devchain
-      - ${HOME}/.claude:/home/node/.claude
-      - ${HOME}/.codex:/home/node/.codex
-      - ${HOME}/.gemini:/home/node/.gemini
-      - ${HOME}/.opencode:/home/node/.opencode
+      - ${HOME}/.claude:${HOME}/.claude
+      - ${HOME}/.codex:${HOME}/.codex
+      - ${HOME}/.gemini:${HOME}/.gemini
+      - ${HOME}/.opencode:${HOME}/.opencode
+      - ${HOME}/projects:${HOME}/projects:cached
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - NODE_ENV=production

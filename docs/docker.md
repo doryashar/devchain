@@ -34,18 +34,21 @@ The container mounts your host's AI provider configurations, allowing it to use 
 
 | Provider | Host Path | Container Path | CLI |
 |----------|-----------|----------------|-----|
-| Claude Code | `~/.claude` | `/home/node/.claude` | `claude` |
-| OpenAI Codex | `~/.codex` | `/home/node/.codex` | `codex` |
-| Google Gemini | `~/.gemini` | `/home/node/.gemini` | `gemini` |
-| OpenCode (z.ai) | `~/.opencode` | `/home/node/.opencode` | `opencode` |
+| Claude Code | `~/.claude` | `~/.claude` | `claude` |
+| OpenAI Codex | `~/.codex` | `~/.codex` | `codex` |
+| Google Gemini | `~/.gemini` | `~/.gemini` | `gemini` |
+| OpenCode (z.ai) | `~/.opencode` | `~/.opencode` | `opencode` |
+| Projects | `~/projects` | `~/projects` | - |
 
-Any changes made inside the container persist on your host.
+All paths are mounted to the same location inside the container to ensure compatibility with existing DevChain database entries. Any changes made inside the container persist on your host.
 
 **Important**: Ensure these directories exist on your host before starting:
 
 ```bash
-mkdir -p ~/.claude ~/.codex ~/.gemini ~/.opencode
+mkdir -p ~/.claude ~/.codex ~/.gemini ~/.opencode ~/projects
 ```
+
+**Note**: The projects directory can be customized in `docker-compose.yml` if your projects are located elsewhere.
 
 ## Configuration
 
