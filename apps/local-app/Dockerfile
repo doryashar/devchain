@@ -87,9 +87,7 @@ RUN apt-get update \
 # Provider CLIs required by containerized DevChain
 ENV PATH=/home/node/.local/bin:${PATH}
 
-RUN su - node -c "curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}"
-
-RUN npm install -g @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} opencode-ai@${OPENCODE_VERSION} \
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} opencode-ai@${OPENCODE_VERSION} \
     && claude --version \
     && codex --version \
     && gemini --version \
