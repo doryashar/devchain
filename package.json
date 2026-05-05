@@ -1,6 +1,6 @@
 {
   "name": "devchain-cli",
-  "version": "0.12.3",
+  "version": "0.12.4",
   "description": "AI driven development platform",
   "homepage": "https://devchain.twitechlab.com/",
   "repository": {
@@ -8,6 +8,11 @@
     "url": "https://github.com/twitech-lab/devchain.git"
   },
   "changelog": {
+    "0.12.4": [
+      "Board: pin a saved filter as the project default",
+      "Fix dev-mode Ctrl+C child cleanup",
+      "Fix Gemini runtime readiness in terminals"
+    ],
     "0.12.3": [
       "Remote/VM binding: --host flag for devchain start",
       "Gemini: auto-provision trusted-folders and per-project MCP at project lifecycle",

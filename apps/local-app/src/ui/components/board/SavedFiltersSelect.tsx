@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Bookmark, Plus, Pencil, Trash2, Check, ChevronDown } from 'lucide-react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
+import { Bookmark, Plus, Pencil, Trash2, Check, ChevronDown, Star } from 'lucide-react';
 import { Button } from '@/ui/components/ui/button';
 import { Input } from '@/ui/components/ui/input';
 import { Label } from '@/ui/components/ui/label';
@@ -19,6 +19,10 @@ import {
   saveFilter,
   renameFilter,
   deleteFilter,
+  isFilterActive,
+  getDefaultFilterId,
+  setDefaultFilterId,
+  clearDefaultFilterId,
   SavedFilter,
 } from '@/ui/lib/saved-filters';
 import { serializeBoardFilters, BoardFilterParams } from '@/ui/lib/url-filters';
@@ -62,7 +66,22 @@ export function SavedFiltersSelect({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [filters, setFilters] = useState<SavedFilter[]>([]);
-  const [activeFilterId, setActiveFilterId] = useState<string | null>(null);
+
+  // URL-derived active filter IDs — any saved filter whose qs matches current URL params
+  const activeFilterIds = useMemo<Set<string>>(() => {
+    const set = new Set<string>();
+    for (const f of filters) {
+      if (isFilterActive(f, currentFilters)) set.add(f.id);
+    }
+    return set;
+  }, [filters, currentFilters]);
+
+  // Default filter state
+  const [defaultId, setDefaultId] = useState<string | null>(() => getDefaultFilterId(projectId));
+
+  const reloadDefaultId = useCallback(() => {
+    setDefaultId(getDefaultFilterId(projectId));
+  }, [projectId]);
 
   // Dialog states
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
@@ -80,7 +99,8 @@ export function SavedFiltersSelect({
 
   useEffect(() => {
     loadFilters();
-  }, [loadFilters]);
+    reloadDefaultId();
+  }, [loadFilters, reloadDefaultId]);
 
   // Check if current filters have any active state (excluding pagination)
   const hasActiveFilters = useCallback(() => {
@@ -116,7 +136,6 @@ export function SavedFiltersSelect({
   // Handle apply filter
   const handleApply = useCallback(
     (filter: SavedFilter) => {
-      setActiveFilterId(filter.id);
       onApply(filter.qs);
       setOpen(false);
       toast({
@@ -155,7 +174,6 @@ export function SavedFiltersSelect({
       const qs = serializeBoardFilters(filterParams);
       const newFilter = saveFilter(projectId, filterName.trim(), qs);
       loadFilters();
-      setActiveFilterId(newFilter.id);
       setSaveDialogOpen(false);
       setOpen(false);
       toast({
@@ -209,10 +227,8 @@ export function SavedFiltersSelect({
 
     try {
       deleteFilter(projectId, editingFilter.id);
-      if (activeFilterId === editingFilter.id) {
-        setActiveFilterId(null);
-      }
       loadFilters();
+      reloadDefaultId();
       setDeleteDialogOpen(false);
       toast({
         title: 'Filter deleted',
@@ -226,24 +242,7 @@ export function SavedFiltersSelect({
         variant: 'destructive',
       });
     }
-  }, [editingFilter, projectId, activeFilterId, loadFilters, toast]);
-
-  // Clear active filter when filters change externally
-  useEffect(() => {
-    if (activeFilterId) {
-      const active = filters.find((f) => f.id === activeFilterId);
-      if (active) {
-        // Check if current filters still match the active saved filter
-        const filterParams = withoutPagination(currentFilters);
-        const currentQs = serializeBoardFilters(filterParams);
-        if (currentQs !== active.qs) {
-          setActiveFilterId(null);
-        }
-      }
-    }
-  }, [currentFilters, activeFilterId, filters]);
-
-  const activeFilter = filters.find((f) => f.id === activeFilterId);
+  }, [editingFilter, projectId, loadFilters, reloadDefaultId, toast]);
 
   return (
     <>
@@ -256,7 +255,9 @@ export function SavedFiltersSelect({
             aria-label="Saved filters"
           >
             <Bookmark className="h-4 w-4" />
-            {activeFilter ? activeFilter.name : 'Saved'}
+            {activeFilterIds.size === 1
+              ? (filters.find((f) => activeFilterIds.has(f.id))?.name ?? 'Saved')
+              : 'Saved'}
             <ChevronDown className="h-3 w-3 opacity-50" />
           </Button>
         </PopoverTrigger>
@@ -285,51 +286,78 @@ export function SavedFiltersSelect({
                 </div>
               ) : (
                 <div className="py-1">
-                  {filters.map((filter) => (
-                    <div
-                      key={filter.id}
-                      className={cn(
-                        'group flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer',
-                        activeFilterId === filter.id && 'bg-accent',
-                      )}
-                    >
-                      <button
-                        className="flex-1 text-left text-sm truncate"
-                        onClick={() => handleApply(filter)}
+                  {filters.map((filter) => {
+                    const isActive = activeFilterIds.has(filter.id);
+                    const isDefault = defaultId === filter.id;
+                    return (
+                      <div
+                        key={filter.id}
+                        className={cn(
+                          'group flex items-center gap-2 px-3 py-2 hover:bg-accent cursor-pointer',
+                          isActive && 'bg-accent border-l-2 border-l-primary',
+                        )}
                       >
-                        {filter.name}
-                      </button>
-                      {activeFilterId === filter.id && (
-                        <Check className="h-4 w-4 text-primary shrink-0" />
-                      )}
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0"
+                        <button
+                          className="h-5 w-5 shrink-0 flex items-center justify-center rounded-sm hover:bg-muted"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleOpenRenameDialog(filter);
+                            if (isDefault) {
+                              clearDefaultFilterId(projectId);
+                            } else {
+                              setDefaultFilterId(projectId, filter.id);
+                            }
+                            reloadDefaultId();
                           }}
-                          aria-label={`Rename "${filter.name}"`}
+                          aria-label={isDefault ? 'Unset default filter' : 'Set as default filter'}
                         >
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenDeleteDialog(filter);
-                          }}
-                          aria-label={`Delete "${filter.name}"`}
+                          <Star
+                            className={cn(
+                              'h-3.5 w-3.5',
+                              isDefault ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground',
+                            )}
+                          />
+                        </button>
+                        <button
+                          className="flex-1 text-left text-sm truncate flex items-center gap-1.5"
+                          onClick={() => handleApply(filter)}
                         >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                          <span className="truncate">{filter.name}</span>
+                          {isDefault && (
+                            <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 shrink-0">
+                              ★ Default
+                            </span>
+                          )}
+                        </button>
+                        {isActive && <Check className="h-4 w-4 text-primary shrink-0" />}
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenRenameDialog(filter);
+                            }}
+                            aria-label={`Rename "${filter.name}"`}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-destructive hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDeleteDialog(filter);
+                            }}
+                            aria-label={`Delete "${filter.name}"`}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

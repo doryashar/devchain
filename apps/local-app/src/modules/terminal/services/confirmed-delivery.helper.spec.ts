@@ -106,4 +106,78 @@ describe('deliverWithConfirmation', () => {
       expect(result.skipped).toBeUndefined();
     });
   });
+
+  describe('postPasteDelayMs threading', () => {
+    it('confirm path: passes postPasteDelayMs to pasteAndSubmit', async () => {
+      await deliverWithConfirmation(
+        mockTmux as unknown as TmuxService,
+        mockSendCoordinator as unknown as TerminalSendCoordinatorService,
+        { tmuxSessionId: 'tmux-1', text: 'Hello', agentId: 'agent-1', postPasteDelayMs: 1500 },
+      );
+
+      const opts = mockTmux.pasteAndSubmit.mock.calls[0][2];
+      expect(opts).toHaveProperty('postPasteDelayMs', 1500);
+    });
+
+    it('confirm path: passes undefined when caller omits postPasteDelayMs', async () => {
+      await deliverWithConfirmation(
+        mockTmux as unknown as TmuxService,
+        mockSendCoordinator as unknown as TerminalSendCoordinatorService,
+        { tmuxSessionId: 'tmux-1', text: 'Hello', agentId: 'agent-1' },
+      );
+
+      const opts = mockTmux.pasteAndSubmit.mock.calls[0][2];
+      expect(opts?.postPasteDelayMs).toBeUndefined();
+    });
+
+    it('skip path: passes postPasteDelayMs to pasteAndSubmit', async () => {
+      await deliverWithConfirmation(
+        mockTmux as unknown as TmuxService,
+        mockSendCoordinator as unknown as TerminalSendCoordinatorService,
+        {
+          tmuxSessionId: 'tmux-1',
+          text: 'Hello',
+          agentId: 'agent-1',
+          skipConfirmation: true,
+          postPasteDelayMs: 1500,
+        },
+      );
+
+      const opts = mockTmux.pasteAndSubmit.mock.calls[0][2];
+      expect(opts).toHaveProperty('postPasteDelayMs', 1500);
+    });
+
+    it('skip path: passes undefined when caller omits postPasteDelayMs', async () => {
+      await deliverWithConfirmation(
+        mockTmux as unknown as TmuxService,
+        mockSendCoordinator as unknown as TerminalSendCoordinatorService,
+        { tmuxSessionId: 'tmux-1', text: 'Hello', agentId: 'agent-1', skipConfirmation: true },
+      );
+
+      const opts = mockTmux.pasteAndSubmit.mock.calls[0][2];
+      expect(opts?.postPasteDelayMs).toBeUndefined();
+    });
+
+    it('retry on PasteNotConfirmedError preserves postPasteDelayMs', async () => {
+      jest.useFakeTimers();
+      mockTmux.pasteAndSubmit
+        .mockRejectedValueOnce(new PasteNotConfirmedError('tmux-1'))
+        .mockResolvedValueOnce(undefined);
+
+      const promise = deliverWithConfirmation(
+        mockTmux as unknown as TmuxService,
+        mockSendCoordinator as unknown as TerminalSendCoordinatorService,
+        { tmuxSessionId: 'tmux-1', text: 'Hello', agentId: 'agent-1', postPasteDelayMs: 1500 },
+      );
+      await jest.runAllTimersAsync();
+      await promise;
+
+      expect(mockTmux.pasteAndSubmit).toHaveBeenCalledTimes(2);
+      const firstOpts = mockTmux.pasteAndSubmit.mock.calls[0][2];
+      const secondOpts = mockTmux.pasteAndSubmit.mock.calls[1][2];
+      expect(firstOpts).toHaveProperty('postPasteDelayMs', 1500);
+      expect(secondOpts).toHaveProperty('postPasteDelayMs', 1500);
+      jest.useRealTimers();
+    });
+  });
 });

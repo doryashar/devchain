@@ -15,6 +15,7 @@ import {
   serializeBoardFilters,
   type BoardFilterParams,
 } from '@/ui/lib/url-filters';
+import { getDefaultFilterId, getFilterById } from '@/ui/lib/saved-filters';
 import { fetchSubEpics } from '@/ui/pages/board/lib/board-api';
 import type { Epic, Status } from '@/ui/types';
 
@@ -99,6 +100,9 @@ export function useBoardPageController() {
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
 
+  const appliedDefaultsRef = useRef<Set<string>>(new Set());
+  const lastAutoAppliedRef = useRef<{ projectId: string; search: string } | null>(null);
+
   // URL → UI hydration (read-only in this epic)
   const { filters } = useBoardFilters();
   const {
@@ -123,6 +127,38 @@ export function useBoardPageController() {
     const nextParent = filters.parent ?? null;
     setActiveParentId((prev) => (prev === nextParent ? prev : nextParent));
   }, [filters.parent]);
+
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    if (appliedDefaultsRef.current.has(selectedProjectId)) return;
+
+    const isCarryover =
+      lastAutoAppliedRef.current !== null &&
+      lastAutoAppliedRef.current.projectId !== selectedProjectId &&
+      lastAutoAppliedRef.current.search === location.search;
+
+    if (location.search !== '' && !isCarryover) {
+      appliedDefaultsRef.current.add(selectedProjectId);
+      return;
+    }
+
+    const defaultId = getDefaultFilterId(selectedProjectId);
+    const filter = defaultId ? getFilterById(selectedProjectId, defaultId) : null;
+    const normalized = filter
+      ? serializeBoardFilters(parseBoardFilters(new URLSearchParams(filter.qs)))
+      : '';
+
+    if (normalized) {
+      const newSearch = `?${normalized}`;
+      navigate({ pathname: location.pathname, search: newSearch }, { replace: true });
+      lastAutoAppliedRef.current = { projectId: selectedProjectId, search: newSearch };
+    } else if (isCarryover) {
+      navigate({ pathname: location.pathname, search: '' }, { replace: true });
+      lastAutoAppliedRef.current = null;
+    }
+
+    appliedDefaultsRef.current.add(selectedProjectId);
+  }, [selectedProjectId, location.search, location.pathname, navigate]);
 
   // Track previous status filter to detect changes
   const prevStatusFilterRef = useRef<string[] | undefined>(filters.status);

@@ -33,6 +33,13 @@ describe('GeminiAdapter', () => {
     });
   });
 
+  describe('runtimePromptBehavior', () => {
+    it('declares 1500ms postPasteDelayMs for TUI settle time', () => {
+      expect(adapter.runtimePromptBehavior).toBeDefined();
+      expect(adapter.runtimePromptBehavior!.postPasteDelayMs).toBe(1500);
+    });
+  });
+
   describe('addMcpServer', () => {
     it('builds command with default alias', () => {
       const args = adapter.addMcpServer({

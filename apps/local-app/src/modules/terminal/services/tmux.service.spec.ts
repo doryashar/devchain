@@ -535,6 +535,115 @@ describe('TmuxService', () => {
       expect(pasteTextSpy).toHaveBeenCalledTimes(1);
       expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
     });
+
+    describe('postPasteDelayMs', () => {
+      it('confirm path: defaults to 250ms delay before Enter when undefined', async () => {
+        const confirmSpy = jest
+          .spyOn(tmuxService, 'confirmPasteDelivery')
+          .mockResolvedValue({ confirmed: true, elapsedMs: 10, method: 'nonce' });
+        jest.spyOn(tmuxService, 'capturePaneStrict').mockResolvedValue({ ok: true, output: '' });
+
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          confirm: true,
+          nonce: 'abc',
+        });
+
+        await jest.advanceTimersByTimeAsync(250);
+        await promise;
+
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('confirm path: applies 1500ms delay before Enter', async () => {
+        jest
+          .spyOn(tmuxService, 'confirmPasteDelivery')
+          .mockResolvedValue({ confirmed: true, elapsedMs: 10, method: 'nonce' });
+        jest.spyOn(tmuxService, 'capturePaneStrict').mockResolvedValue({ ok: true, output: '' });
+
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          confirm: true,
+          nonce: 'abc',
+          postPasteDelayMs: 1500,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('confirm path: clamps negative to 0ms', async () => {
+        jest
+          .spyOn(tmuxService, 'confirmPasteDelivery')
+          .mockResolvedValue({ confirmed: true, elapsedMs: 10, method: 'nonce' });
+        jest.spyOn(tmuxService, 'capturePaneStrict').mockResolvedValue({ ok: true, output: '' });
+
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          confirm: true,
+          nonce: 'abc',
+          postPasteDelayMs: -100,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('confirm path: clamps NaN to 0ms', async () => {
+        jest
+          .spyOn(tmuxService, 'confirmPasteDelivery')
+          .mockResolvedValue({ confirmed: true, elapsedMs: 10, method: 'nonce' });
+        jest.spyOn(tmuxService, 'capturePaneStrict').mockResolvedValue({ ok: true, output: '' });
+
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          confirm: true,
+          nonce: 'abc',
+          postPasteDelayMs: NaN,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('confirm path: clamps excessive value to 5000ms', async () => {
+        jest
+          .spyOn(tmuxService, 'confirmPasteDelivery')
+          .mockResolvedValue({ confirmed: true, elapsedMs: 10, method: 'nonce' });
+        jest.spyOn(tmuxService, 'capturePaneStrict').mockResolvedValue({ ok: true, output: '' });
+
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          confirm: true,
+          nonce: 'abc',
+          postPasteDelayMs: 999999,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('skip-confirm path: respects postPasteDelayMs', async () => {
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          postPasteDelayMs: 500,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+
+      it('delayMs takes precedence over postPasteDelayMs', async () => {
+        const promise = tmuxService.pasteAndSubmit('sess-1', 'hello', {
+          delayMs: 100,
+          postPasteDelayMs: 1500,
+        });
+
+        await jest.runAllTimersAsync();
+        await promise;
+        expect(sendKeysSpy).toHaveBeenCalledWith('sess-1', ['Enter']);
+      });
+    });
   });
 
   describe('capturePaneStrict', () => {

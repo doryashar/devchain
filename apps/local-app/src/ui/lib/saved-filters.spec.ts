@@ -6,6 +6,10 @@ import {
   filterNameExists,
   updateFilterQuery,
   getFilterById,
+  getDefaultFilterId,
+  setDefaultFilterId,
+  clearDefaultFilterId,
+  isFilterActive,
   SavedFilter,
 } from './saved-filters';
 
@@ -285,6 +289,243 @@ describe('saved-filters LocalStorage helpers', () => {
 
       expect(getSavedFilters('project-1')[0].qs).toBe('st=review');
       expect(getSavedFilters('project-2')[0].qs).toBe('st=done');
+    });
+  });
+
+  describe('generateClientId (crypto fallback)', () => {
+    afterEach(() => {
+      // Restore original crypto mock
+      Object.defineProperty(global, 'crypto', {
+        value: { randomUUID: mockRandomUUID },
+        configurable: true,
+      });
+    });
+
+    it('returns valid UUID-v4 format via getRandomValues fallback', () => {
+      Object.defineProperty(global, 'crypto', {
+        value: {
+          getRandomValues: (arr: Uint8Array) => {
+            for (let i = 0; i < arr.length; i++) arr[i] = i;
+            return arr;
+          },
+        },
+        configurable: true,
+      });
+
+      window.localStorage.clear();
+      const filter = saveFilter('fallback-test', 'Test', 'st=review');
+
+      expect(filter.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    });
+
+    it('sets correct version and variant bits in fallback UUID', () => {
+      Object.defineProperty(global, 'crypto', {
+        value: {
+          getRandomValues: (arr: Uint8Array) => {
+            for (let i = 0; i < arr.length; i++) arr[i] = i;
+            return arr;
+          },
+        },
+        configurable: true,
+      });
+
+      window.localStorage.clear();
+      const filter = saveFilter('bits-test', 'Test', 'st=review');
+
+      // Version 4: third group starts with 4
+      // Variant 10xx: fourth group starts with 8/9/a/b
+      expect(filter.id).toMatch(/-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-/);
+    });
+
+    it('saves filter with valid shape via fallback', () => {
+      Object.defineProperty(global, 'crypto', {
+        value: {
+          getRandomValues: (arr: Uint8Array) => {
+            for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+            return arr;
+          },
+        },
+        configurable: true,
+      });
+
+      window.localStorage.clear();
+      const filter = saveFilter('shape-test', 'Shape Test', 'st=done');
+
+      expect(filter).toEqual({
+        id: expect.any(String),
+        name: 'Shape Test',
+        qs: 'st=done',
+      });
+
+      // Verify persisted
+      const stored = getSavedFilters('shape-test');
+      expect(stored).toHaveLength(1);
+      expect(stored[0].id).toBe(filter.id);
+    });
+  });
+
+  describe('default filter pointer', () => {
+    const defProjectId = 'default-test-project';
+    const defStorageKey = `devchain:board:defaultFilterId:${defProjectId}`;
+
+    beforeEach(() => {
+      window.localStorage.clear();
+      uuidCounter = 0;
+    });
+
+    describe('getDefaultFilterId', () => {
+      it('returns null when no default is set', () => {
+        expect(getDefaultFilterId(defProjectId)).toBeNull();
+      });
+
+      it('returns the stored ID when the filter exists', () => {
+        const filter = saveFilter(defProjectId, 'My Filter', 'st=review');
+        setDefaultFilterId(defProjectId, filter.id);
+
+        expect(getDefaultFilterId(defProjectId)).toBe(filter.id);
+      });
+
+      it('returns null and clears pointer when filter no longer exists', () => {
+        const filter = saveFilter(defProjectId, 'My Filter', 'st=review');
+        setDefaultFilterId(defProjectId, filter.id);
+
+        // Directly remove the filter from storage (simulates external mutation)
+        const filters = getSavedFilters(defProjectId).filter((f) => f.id !== filter.id);
+        window.localStorage.setItem(
+          `devchain:board:savedFilters:${defProjectId}`,
+          JSON.stringify(filters),
+        );
+
+        expect(getDefaultFilterId(defProjectId)).toBeNull();
+        expect(window.localStorage.getItem(defStorageKey)).toBeNull();
+      });
+    });
+
+    describe('setDefaultFilterId', () => {
+      it('writes the ID to localStorage', () => {
+        setDefaultFilterId(defProjectId, 'test-id');
+        expect(window.localStorage.getItem(defStorageKey)).toBe('test-id');
+      });
+
+      it('overwrites previous default', () => {
+        setDefaultFilterId(defProjectId, 'old-id');
+        setDefaultFilterId(defProjectId, 'new-id');
+        expect(window.localStorage.getItem(defStorageKey)).toBe('new-id');
+      });
+    });
+
+    describe('clearDefaultFilterId', () => {
+      it('removes the pointer from localStorage', () => {
+        setDefaultFilterId(defProjectId, 'test-id');
+        expect(window.localStorage.getItem(defStorageKey)).toBe('test-id');
+
+        clearDefaultFilterId(defProjectId);
+        expect(window.localStorage.getItem(defStorageKey)).toBeNull();
+      });
+
+      it('is a no-op when no default is set', () => {
+        clearDefaultFilterId(defProjectId);
+        expect(window.localStorage.getItem(defStorageKey)).toBeNull();
+      });
+    });
+
+    describe('deleteFilter clears default pointer', () => {
+      it('clears default when the deleted filter was the default', () => {
+        const filter = saveFilter(defProjectId, 'My Filter', 'st=review');
+        setDefaultFilterId(defProjectId, filter.id);
+        expect(getDefaultFilterId(defProjectId)).toBe(filter.id);
+
+        deleteFilter(defProjectId, filter.id);
+
+        expect(getDefaultFilterId(defProjectId)).toBeNull();
+      });
+
+      it('does not clear default when a different filter is deleted', () => {
+        const filter1 = saveFilter(defProjectId, 'Filter One', 'st=review');
+        const filter2 = saveFilter(defProjectId, 'Filter Two', 'st=done');
+        setDefaultFilterId(defProjectId, filter1.id);
+
+        deleteFilter(defProjectId, filter2.id);
+
+        expect(getDefaultFilterId(defProjectId)).toBe(filter1.id);
+      });
+    });
+
+    describe('renameFilter preserves default pointer', () => {
+      it('keeps the default pointer after renaming the default filter', () => {
+        const filter = saveFilter(defProjectId, 'My Filter', 'st=review');
+        setDefaultFilterId(defProjectId, filter.id);
+
+        renameFilter(defProjectId, filter.id, 'Renamed Filter');
+
+        expect(getDefaultFilterId(defProjectId)).toBe(filter.id);
+        const filters = getSavedFilters(defProjectId);
+        expect(filters[0].name).toBe('Renamed Filter');
+      });
+    });
+
+    describe('project isolation', () => {
+      it('default pointer is per-project', () => {
+        const filterA = saveFilter('proj-a', 'Filter A', 'st=review');
+        saveFilter('proj-b', 'Filter B', 'st=done');
+
+        setDefaultFilterId('proj-a', filterA.id);
+
+        expect(getDefaultFilterId('proj-a')).toBe(filterA.id);
+        expect(getDefaultFilterId('proj-b')).toBeNull();
+      });
+
+      it('deleting default in one project does not affect another', () => {
+        const filterA = saveFilter('proj-a', 'Filter A', 'st=review');
+        const filterB = saveFilter('proj-b', 'Filter B', 'st=done');
+        setDefaultFilterId('proj-a', filterA.id);
+        setDefaultFilterId('proj-b', filterB.id);
+
+        deleteFilter('proj-a', filterA.id);
+
+        expect(getDefaultFilterId('proj-a')).toBeNull();
+        expect(getDefaultFilterId('proj-b')).toBe(filterB.id);
+      });
+    });
+  });
+
+  describe('isFilterActive', () => {
+    it('returns true when saved filter qs matches current filters', () => {
+      const filter: SavedFilter = { id: '1', name: 'Test', qs: 'st=review' };
+      const currentFilters = { status: ['review'] };
+      expect(isFilterActive(filter, currentFilters)).toBe(true);
+    });
+
+    it('returns false when filters do not match', () => {
+      const filter: SavedFilter = { id: '1', name: 'Test', qs: 'st=review' };
+      const currentFilters = { status: ['done'] };
+      expect(isFilterActive(filter, currentFilters)).toBe(false);
+    });
+
+    it('returns false when saved filter qs is empty and current has filters', () => {
+      const filter: SavedFilter = { id: '1', name: 'Test', qs: '' };
+      const currentFilters = { status: ['review'] };
+      expect(isFilterActive(filter, currentFilters)).toBe(false);
+    });
+
+    it('ignores pagination differences', () => {
+      const filter: SavedFilter = { id: '1', name: 'Test', qs: 'st=done' };
+      const currentFilters = { status: ['done'], page: 2, pageSize: 50 };
+      expect(isFilterActive(filter, currentFilters)).toBe(true);
+    });
+
+    it('matches multi-value params with dedup', () => {
+      const filter: SavedFilter = { id: '1', name: 'Test', qs: 'st=review,done' };
+      const currentFilters = { status: ['done', 'review'] };
+      expect(isFilterActive(filter, currentFilters)).toBe(true);
+    });
+
+    it('returns true for multiple filters with identical qs', () => {
+      const filter1: SavedFilter = { id: '1', name: 'A', qs: 'st=review' };
+      const filter2: SavedFilter = { id: '2', name: 'B', qs: 'st=review' };
+      const currentFilters = { status: ['review'] };
+      expect(isFilterActive(filter1, currentFilters)).toBe(true);
+      expect(isFilterActive(filter2, currentFilters)).toBe(true);
     });
   });
 });

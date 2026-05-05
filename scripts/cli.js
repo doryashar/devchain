@@ -1617,20 +1617,36 @@ async function main(argv) {
         cli.info('Starting API (dev mode)...');
         cli.blank();
 
-        // Helper to kill process group (all children)
-        const killProcessGroup = (proc) => {
+        // Signal entire process group (all children). On Unix, a negative PID
+        // targets the PG; on Windows we fall back to signalling the child directly.
+        const signalProcessGroup = (proc, signal) => {
           if (!proc || !proc.pid) return;
           try {
-            // On Unix, negative PID kills the entire process group
             if (platform() !== 'win32') {
-              process.kill(-proc.pid, 'SIGTERM');
+              process.kill(-proc.pid, signal);
             } else {
-              proc.kill('SIGTERM');
+              proc.kill(signal);
             }
           } catch (e) {
             // Process may already be dead
           }
         };
+        const killProcessGroup = (proc) => signalProcessGroup(proc, 'SIGTERM');
+
+        // Resolve when the child process emits 'exit' (or immediately if it
+        // already exited). Lets cleanup await actual termination.
+        const waitForExit = (proc) => new Promise((resolve) => {
+          if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
+            resolve();
+            return;
+          }
+          proc.once('exit', () => resolve());
+        });
+
+        const waitWithTimeout = (promise, ms) => Promise.race([
+          promise,
+          new Promise((resolve) => setTimeout(resolve, ms)),
+        ]);
 
         // Spawn NestJS in watch mode (detached to create process group)
         const devSpawnConfig = getDevModeSpawnConfig({
@@ -1706,11 +1722,41 @@ async function main(argv) {
           writePidFile(port, effectiveHost);
         }
 
-        // Handle cleanup on exit - kill entire process groups
-        const cleanup = () => {
+        // Handle cleanup on exit - kill entire process groups, then wait for
+        // children to actually exit before removing the PID file and exiting.
+        // Re-entrancy: a second Ctrl+C escalates to SIGKILL immediately instead
+        // of waiting again.
+        let cleanupStarted = false;
+        const SIGTERM_GRACE_MS = 5000;
+        const SIGKILL_GRACE_MS = 2000;
+        const cleanup = async () => {
+          if (cleanupStarted) {
+            // Second signal: stop being polite
+            signalProcessGroup(nestProcess, 'SIGKILL');
+            signalProcessGroup(viteProcess, 'SIGKILL');
+            return;
+          }
+          cleanupStarted = true;
           console.log('\nShutting down development servers...');
+
+          const nestExited = waitForExit(nestProcess);
+          const viteExited = waitForExit(viteProcess);
+
           killProcessGroup(nestProcess);
           killProcessGroup(viteProcess);
+
+          await waitWithTimeout(Promise.all([nestExited, viteExited]), SIGTERM_GRACE_MS);
+
+          // Anything still alive after the grace period gets SIGKILL.
+          const stillAlive = [nestProcess, viteProcess].filter(
+            (p) => p && p.exitCode === null && p.signalCode === null,
+          );
+          if (stillAlive.length > 0) {
+            console.log(`Forcing shutdown of ${stillAlive.length} unresponsive process(es)...`);
+            for (const p of stillAlive) signalProcessGroup(p, 'SIGKILL');
+            await waitWithTimeout(Promise.all([nestExited, viteExited]), SIGKILL_GRACE_MS);
+          }
+
           if (!worktreeRuntimeMode) {
             removePidFile();
           }

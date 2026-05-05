@@ -29,6 +29,20 @@ export interface LaunchInitialPromptBehavior {
 }
 
 /**
+ * Per-provider runtime delivery readiness behavior.
+ * Providers whose TUIs need settle time between paste confirmation and
+ * Enter dispatch can declare a delay here. Consumed by deliverWithConfirmation
+ * and pasteAndSubmit on the runtime (non-launch) path.
+ */
+export interface RuntimePromptBehavior {
+  /** Milliseconds to wait between paste landing/confirmation and Enter dispatch.
+   *  Allows TUI input editors with debounced state machines to settle into
+   *  submit-ready state before receiving the submit keystroke.
+   *  Clamped to [0, 5000] at the consumer boundary; NaN/negative → 0. */
+  postPasteDelayMs?: number;
+}
+
+/**
  * Options for adding an MCP server
  */
 export interface AddMcpServerOptions {
@@ -86,6 +100,13 @@ export interface ProviderAdapter {
    * dialogs before injecting the initial prompt.
    */
   readonly launchInitialPromptBehavior?: LaunchInitialPromptBehavior;
+
+  /**
+   * Optional runtime delivery readiness metadata.
+   * When set, runtime message delivery uses the declared delay between
+   * paste confirmation and Enter dispatch. Undefined → consumer default (250ms).
+   */
+  readonly runtimePromptBehavior?: RuntimePromptBehavior;
 
   /**
    * Build command arguments for adding an MCP server

@@ -1630,11 +1630,16 @@ export class SessionsService {
     logger.info({ sessionId, tmuxSessionId: session.tmuxSessionId }, 'Injecting text into session');
 
     // Use shared confirmed delivery helper (retry, Escape, Enter fallback)
+    const agentId = session.agentId ?? undefined;
+    const postPasteDelayMs = agentId
+      ? await this.providerAdapterFactory.getPostPasteDelayMsForAgent(agentId)
+      : undefined;
     const result = await deliverWithConfirmation(this.tmuxService, this.sendCoordinator, {
       tmuxSessionId: session.tmuxSessionId,
       text,
       submitKeys: ['Enter'],
-      agentId: session.agentId ?? undefined,
+      agentId,
+      postPasteDelayMs,
     });
 
     return { confirmed: result.confirmed, method: result.method };

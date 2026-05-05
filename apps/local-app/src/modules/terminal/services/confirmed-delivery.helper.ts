@@ -36,6 +36,7 @@ export async function deliverWithConfirmation(
     submitKeys?: string[];
     agentId?: string;
     skipConfirmation?: boolean;
+    postPasteDelayMs?: number;
   },
 ): Promise<ConfirmedDeliveryResult> {
   const { tmuxSessionId, text, agentId, skipConfirmation } = params;
@@ -45,7 +46,11 @@ export async function deliverWithConfirmation(
     if (agentId && sendCoordinator) {
       await sendCoordinator.ensureAgentGap(agentId, 1000);
     }
-    await tmux.pasteAndSubmit(tmuxSessionId, text, { submitKeys, bracketed: true });
+    await tmux.pasteAndSubmit(tmuxSessionId, text, {
+      submitKeys,
+      bracketed: true,
+      postPasteDelayMs: params.postPasteDelayMs,
+    });
     return { skipped: true, confirmed: true, nonce: '', retryCount: 0 };
   }
 
@@ -65,6 +70,7 @@ export async function deliverWithConfirmation(
         submitKeys,
         confirm: true,
         nonce: lastNonce,
+        postPasteDelayMs: params.postPasteDelayMs,
       });
 
       // Success — confirmed delivery

@@ -24,6 +24,7 @@ export class GeminiAdapter implements ProviderAdapter {
     preKeys: ['Enter'],
     preDelayMs: 5000,
   };
+  readonly runtimePromptBehavior = { postPasteDelayMs: 1500 };
 
   addMcpServer(options: AddMcpServerOptions): string[] {
     const alias = options.alias ?? 'devchain';

@@ -7,6 +7,7 @@ import type { TmuxService } from '../../terminal/services/tmux.service';
 import type { SettingsService } from '../../settings/services/settings.service';
 import type { StorageService } from '../../storage/interfaces/storage.interface';
 import { PasteNotConfirmedError, IOError } from '../../../common/errors/error-types';
+import type { ProviderAdapterFactory } from '../../providers/adapters/provider-adapter.factory';
 
 describe('SessionsMessagePoolService', () => {
   let service: SessionsMessagePoolService;
@@ -19,6 +20,9 @@ describe('SessionsMessagePoolService', () => {
   >;
   let mockStorage: jest.Mocked<Pick<StorageService, 'getAgent'>>;
   let mockActivityStream: jest.Mocked<MessageActivityStreamService>;
+  let mockProviderAdapterFactory: jest.Mocked<
+    Pick<ProviderAdapterFactory, 'getPostPasteDelayMsForAgent'>
+  >;
 
   const createMockAgent = (overrides: { id?: string; name?: string; projectId?: string } = {}) => ({
     id: overrides.id ?? 'agent-1',
@@ -91,6 +95,10 @@ describe('SessionsMessagePoolService', () => {
       broadcastPoolsUpdated: jest.fn(),
     } as unknown as jest.Mocked<MessageActivityStreamService>;
 
+    mockProviderAdapterFactory = {
+      getPostPasteDelayMsForAgent: jest.fn().mockResolvedValue(undefined),
+    };
+
     service = new SessionsMessagePoolService(
       mockSessionsService as unknown as SessionsService,
       mockCoordinator as unknown as SessionCoordinatorService,
@@ -99,6 +107,7 @@ describe('SessionsMessagePoolService', () => {
       mockSettings as unknown as SettingsService,
       mockStorage as unknown as StorageService,
       mockActivityStream,
+      mockProviderAdapterFactory as unknown as ProviderAdapterFactory,
     );
   });
 
@@ -538,6 +547,7 @@ describe('SessionsMessagePoolService', () => {
         mockSettings as unknown as SettingsService,
         mockStorage as unknown as StorageService,
         mockActivityStream,
+        mockProviderAdapterFactory as unknown as ProviderAdapterFactory,
       );
 
       // Should not throw, uses defaults
@@ -1879,6 +1889,60 @@ describe('SessionsMessagePoolService', () => {
       expect(log[0].failureCode).toBe('no_active_session');
 
       jest.useRealTimers();
+    });
+  });
+
+  describe('postPasteDelayMs integration', () => {
+    it('immediate delivery resolves postPasteDelayMs for Gemini agent', async () => {
+      mockProviderAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(1500);
+
+      await service.enqueue('agent-1', 'hello', { source: 'test', immediate: true });
+      await jest.runAllTimersAsync();
+
+      expect(mockProviderAdapterFactory.getPostPasteDelayMsForAgent).toHaveBeenCalledWith(
+        'agent-1',
+      );
+      const pasteCall = mockTmux.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall).toBeDefined();
+      expect(pasteCall[2]).toHaveProperty('postPasteDelayMs', 1500);
+    });
+
+    it('immediate delivery passes undefined postPasteDelayMs for Claude agent', async () => {
+      mockProviderAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(undefined);
+
+      await service.enqueue('agent-1', 'hello', { source: 'test', immediate: true });
+      await jest.runAllTimersAsync();
+
+      const pasteCall = mockTmux.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall).toBeDefined();
+      expect(pasteCall[2]?.postPasteDelayMs).toBeUndefined();
+    });
+
+    it('pooled delivery resolves postPasteDelayMs for Gemini agent', async () => {
+      mockProviderAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(1500);
+
+      await service.enqueue('agent-1', 'hello', { source: 'test' });
+      await jest.advanceTimersByTimeAsync(10_001);
+      await jest.runAllTimersAsync();
+
+      expect(mockProviderAdapterFactory.getPostPasteDelayMsForAgent).toHaveBeenCalledWith(
+        'agent-1',
+      );
+      const pasteCall = mockTmux.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall).toBeDefined();
+      expect(pasteCall[2]).toHaveProperty('postPasteDelayMs', 1500);
+    });
+
+    it('pooled delivery passes undefined postPasteDelayMs for Claude agent', async () => {
+      mockProviderAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(undefined);
+
+      await service.enqueue('agent-1', 'hello', { source: 'test' });
+      await jest.advanceTimersByTimeAsync(10_001);
+      await jest.runAllTimersAsync();
+
+      const pasteCall = mockTmux.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall).toBeDefined();
+      expect(pasteCall[2]?.postPasteDelayMs).toBeUndefined();
     });
   });
 });

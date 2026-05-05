@@ -3,7 +3,17 @@ import { ClaudeAdapter } from './claude.adapter';
 import { CodexAdapter } from './codex.adapter';
 import { GeminiAdapter } from './gemini.adapter';
 import { OpencodeAdapter } from './opencode.adapter';
-import { UnsupportedProviderError } from '../../../common/errors/error-types';
+import { UnsupportedProviderError, NotFoundError } from '../../../common/errors/error-types';
+import type { StorageService } from '../../storage/interfaces/storage.interface';
+
+function makeMockStorage(overrides: Partial<Record<string, jest.Mock>> = {}) {
+  return {
+    getAgent: jest.fn(),
+    getProfileProviderConfig: jest.fn(),
+    getProvider: jest.fn(),
+    ...overrides,
+  } as unknown as StorageService;
+}
 
 describe('ProviderAdapterFactory', () => {
   let factory: ProviderAdapterFactory;
@@ -11,13 +21,16 @@ describe('ProviderAdapterFactory', () => {
   let codexAdapter: CodexAdapter;
   let geminiAdapter: GeminiAdapter;
   let opencodeAdapter: OpencodeAdapter;
+  let mockStorage: StorageService;
 
   beforeEach(() => {
     claudeAdapter = new ClaudeAdapter();
     codexAdapter = new CodexAdapter();
     geminiAdapter = new GeminiAdapter();
     opencodeAdapter = new OpencodeAdapter();
+    mockStorage = makeMockStorage();
     factory = new ProviderAdapterFactory(
+      mockStorage,
       claudeAdapter,
       codexAdapter,
       geminiAdapter,
@@ -161,6 +174,99 @@ describe('ProviderAdapterFactory', () => {
       const supported = factory.getSupportedProviders();
       expect(supported).toEqual(expect.arrayContaining(['claude', 'codex', 'gemini', 'opencode']));
       expect(supported).toHaveLength(4);
+    });
+  });
+
+  describe('getPostPasteDelayMsForAgent', () => {
+    const AGENT_ID = 'agent-001';
+    const CONFIG_ID = 'config-001';
+    const PROVIDER_ID = 'provider-001';
+
+    function setupChain(providerName: string) {
+      (mockStorage.getAgent as jest.Mock).mockResolvedValue({
+        id: AGENT_ID,
+        providerConfigId: CONFIG_ID,
+      });
+      (mockStorage.getProfileProviderConfig as jest.Mock).mockResolvedValue({
+        id: CONFIG_ID,
+        providerId: PROVIDER_ID,
+        providerName,
+      });
+    }
+
+    it('returns 1500 for a Gemini agent', async () => {
+      setupChain('gemini');
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBe(1500);
+    });
+
+    it('returns undefined for a Claude agent', async () => {
+      setupChain('claude');
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined for a Codex agent', async () => {
+      setupChain('codex');
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined for an OpenCode agent', async () => {
+      setupChain('opencode');
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when agent not found', async () => {
+      (mockStorage.getAgent as jest.Mock).mockRejectedValue(new NotFoundError('Agent', AGENT_ID));
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when providerConfigId is missing', async () => {
+      (mockStorage.getAgent as jest.Mock).mockResolvedValue({
+        id: AGENT_ID,
+        providerConfigId: null,
+      });
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('returns undefined when config not found', async () => {
+      (mockStorage.getAgent as jest.Mock).mockResolvedValue({
+        id: AGENT_ID,
+        providerConfigId: CONFIG_ID,
+      });
+      (mockStorage.getProfileProviderConfig as jest.Mock).mockRejectedValue(
+        new NotFoundError('Config', CONFIG_ID),
+      );
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
+    });
+
+    it('falls back to getProvider when providerName not on config', async () => {
+      (mockStorage.getAgent as jest.Mock).mockResolvedValue({
+        id: AGENT_ID,
+        providerConfigId: CONFIG_ID,
+      });
+      (mockStorage.getProfileProviderConfig as jest.Mock).mockResolvedValue({
+        id: CONFIG_ID,
+        providerId: PROVIDER_ID,
+        providerName: undefined,
+      });
+      (mockStorage.getProvider as jest.Mock).mockResolvedValue({
+        id: PROVIDER_ID,
+        name: 'gemini',
+      });
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBe(1500);
+    });
+
+    it('returns undefined for unsupported provider name', async () => {
+      setupChain('unknown-provider');
+      const result = await factory.getPostPasteDelayMsForAgent(AGENT_ID);
+      expect(result).toBeUndefined();
     });
   });
 });

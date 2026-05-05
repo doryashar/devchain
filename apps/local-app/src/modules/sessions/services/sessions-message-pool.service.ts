@@ -9,6 +9,7 @@ import { SettingsService } from '../../settings/services/settings.service';
 import { STORAGE_SERVICE, type AgentStorage } from '../../storage/interfaces/storage.interface';
 import { createLogger } from '../../../common/logging/logger';
 import { deliverWithConfirmation } from '../../terminal/services/confirmed-delivery.helper';
+import { ProviderAdapterFactory } from '../../providers/adapters/provider-adapter.factory';
 
 const logger = createLogger('SessionsMessagePoolService');
 
@@ -241,6 +242,7 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
     @Inject(STORAGE_SERVICE) private readonly storage: AgentStorage,
     @Inject(forwardRef(() => MessageActivityStreamService))
     private readonly activityStream: MessageActivityStreamService,
+    private readonly providerAdapterFactory: ProviderAdapterFactory,
   ) {
     // Load initial config from settings
     this.config = this.loadConfigFromSettings();
@@ -864,11 +866,14 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
     const submitKeys = messages[messages.length - 1]?.submitKeys ?? ['Enter'];
 
     try {
+      const postPasteDelayMs =
+        await this.providerAdapterFactory.getPostPasteDelayMsForAgent(agentId);
       const result = await deliverWithConfirmation(this.tmux, this.sendCoordinator, {
         tmuxSessionId,
         text: baseText,
         submitKeys,
         agentId,
+        postPasteDelayMs,
       });
 
       const deliveredAt = Date.now();
@@ -966,12 +971,15 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
 
     // Use agent lock for consistency
     await this.coordinator.withAgentLock(agentId, async () => {
+      const postPasteDelayMs =
+        await this.providerAdapterFactory.getPostPasteDelayMsForAgent(agentId);
       const delivery = await deliverWithConfirmation(this.tmux, this.sendCoordinator, {
         tmuxSessionId: session.tmuxSessionId!,
         text,
         submitKeys,
         agentId,
         skipConfirmation: opts?.skipConfirmation,
+        postPasteDelayMs,
       });
       if (delivery.skipped) {
         result = { nonce: '', skipped: true, retryCount: 0 };

@@ -7,15 +7,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const BoardPage: React.ComponentType = require('./BoardPage').BoardPage;
 
-// Mock project selection to provide a selected project
+// Mutable project selection mock — allows tests to switch projects mid-render
+let __mockSelectedProjectId = 'project-1';
 jest.mock('@/ui/hooks/useProjectSelection', () => ({
   useSelectedProject: () => ({
     projects: [],
     projectsLoading: false,
     projectsError: false,
     refetchProjects: jest.fn(),
-    selectedProjectId: 'project-1',
-    selectedProject: { id: 'project-1', name: 'Project Alpha' },
+    selectedProjectId: __mockSelectedProjectId,
+    selectedProject: { id: __mockSelectedProjectId, name: `Project ${__mockSelectedProjectId}` },
     setSelectedProjectId: jest.fn(),
   }),
 }));
@@ -80,6 +81,7 @@ describe('BoardPage — Saved filters integration', () => {
   const storageKey = 'devchain:board:savedFilters:project-1';
 
   beforeEach(() => {
+    __mockSelectedProjectId = 'project-1';
     window.localStorage.clear();
 
     // Basic fetch stubs for statuses/epics/agents
@@ -328,6 +330,261 @@ describe('BoardPage — Saved filters integration', () => {
       const search = screen.getByTestId('loc-search').textContent;
       expect(search).toContain('v=list');
       expect(search).toContain('st=s1');
+    });
+  });
+
+  describe('auto-apply default filter', () => {
+    const defaultKey = 'devchain:board:defaultFilterId:project-1';
+
+    it('applies default filter on cold mount when search is empty', async () => {
+      const filters = [{ id: 'f1', name: 'My Default', qs: 'st=s1' }];
+      window.localStorage.setItem(storageKey, JSON.stringify(filters));
+      window.localStorage.setItem(defaultKey, 'f1');
+
+      render(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        const search = screen.getByTestId('loc-search').textContent;
+        expect(search).toContain('st=s1');
+      });
+    });
+
+    it('does NOT apply default when URL already has search params', async () => {
+      const filters = [{ id: 'f1', name: 'My Default', qs: 'st=s1&st=s2' }];
+      window.localStorage.setItem(storageKey, JSON.stringify(filters));
+      window.localStorage.setItem(defaultKey, 'f1');
+
+      render(
+        <Wrapper initialEntries={['/board?st=s3']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s3');
+      });
+      // Should NOT have applied the default (s1&s2)
+      expect(screen.getByTestId('loc-search').textContent).not.toContain('st=s1');
+    });
+
+    it('does NOT apply when no default is set', async () => {
+      render(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Epic')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('loc-search').textContent).toBe('');
+    });
+
+    it('auto-apply uses replace (not push) — verified via no duplicate history entries', async () => {
+      const filters = [{ id: 'f1', name: 'My Default', qs: 'st=s1' }];
+      window.localStorage.setItem(storageKey, JSON.stringify(filters));
+      window.localStorage.setItem(defaultKey, 'f1');
+
+      render(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s1');
+      });
+    });
+  });
+
+  describe('auto-apply project-switch carryover', () => {
+    const keyA = 'devchain:board:savedFilters:project-a';
+    const defaultKeyA = 'devchain:board:defaultFilterId:project-a';
+    const keyB = 'devchain:board:savedFilters:project-b';
+    const defaultKeyB = 'devchain:board:defaultFilterId:project-b';
+
+    function renderBoard() {
+      return render(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+    }
+
+    it('applies project B default after switching from A (carryover detection)', async () => {
+      __mockSelectedProjectId = 'project-a';
+      window.localStorage.setItem(
+        keyA,
+        JSON.stringify([{ id: 'fa', name: 'A Default', qs: 'st=s1' }]),
+      );
+      window.localStorage.setItem(defaultKeyA, 'fa');
+      window.localStorage.setItem(
+        keyB,
+        JSON.stringify([{ id: 'fb', name: 'B Default', qs: 'st=s2' }]),
+      );
+      window.localStorage.setItem(defaultKeyB, 'fb');
+
+      const { rerender } = renderBoard();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s1');
+      });
+
+      __mockSelectedProjectId = 'project-b';
+      rerender(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s2');
+      });
+    });
+
+    it('preserves user-intentional URL when switching projects', async () => {
+      __mockSelectedProjectId = 'project-a';
+      window.localStorage.setItem(
+        keyA,
+        JSON.stringify([{ id: 'fa', name: 'A Default', qs: 'st=s1' }]),
+      );
+      window.localStorage.setItem(defaultKeyA, 'fa');
+      window.localStorage.setItem(
+        keyB,
+        JSON.stringify([{ id: 'fb', name: 'B Default', qs: 'st=s2' }]),
+      );
+      window.localStorage.setItem(defaultKeyB, 'fb');
+
+      const { rerender } = render(
+        <Wrapper initialEntries={['/board?st=s3']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s3');
+      });
+
+      __mockSelectedProjectId = 'project-b';
+      rerender(
+        <Wrapper initialEntries={['/board?st=s3']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      // User-intentional URL (not carryover — no auto-apply happened) → preserved
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s3');
+      });
+      expect(screen.getByTestId('loc-search').textContent).not.toContain('st=s2');
+    });
+
+    it('does not re-apply A default when switching back A→B→A within same mount', async () => {
+      __mockSelectedProjectId = 'project-a';
+      window.localStorage.setItem(
+        keyA,
+        JSON.stringify([{ id: 'fa', name: 'A Default', qs: 'st=s1' }]),
+      );
+      window.localStorage.setItem(defaultKeyA, 'fa');
+      window.localStorage.setItem(
+        keyB,
+        JSON.stringify([{ id: 'fb', name: 'B Default', qs: 'st=s2' }]),
+      );
+      window.localStorage.setItem(defaultKeyB, 'fb');
+
+      const { rerender } = renderBoard();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s1');
+      });
+
+      __mockSelectedProjectId = 'project-b';
+      rerender(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s2');
+      });
+
+      __mockSelectedProjectId = 'project-a';
+      rerender(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      // A is already in appliedDefaultsRef — should NOT re-apply A's default
+      // URL stays at B's last applied value
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s2');
+      });
+    });
+
+    it('clears URL when switching to no-default project from auto-applied state', async () => {
+      __mockSelectedProjectId = 'project-a';
+      window.localStorage.setItem(
+        keyA,
+        JSON.stringify([{ id: 'fa', name: 'A Default', qs: 'st=s1' }]),
+      );
+      window.localStorage.setItem(defaultKeyA, 'fa');
+
+      const { rerender } = renderBoard();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toContain('st=s1');
+      });
+
+      __mockSelectedProjectId = 'project-b';
+      rerender(
+        <Wrapper initialEntries={['/board']}>
+          <Routes>
+            <Route path="/board" element={<BoardPage />} />
+          </Routes>
+          <LocationProbe />
+        </Wrapper>,
+      );
+
+      // B has no default — carryover detected → URL cleared
+      await waitFor(() => {
+        expect(screen.getByTestId('loc-search').textContent).toBe('');
+      });
     });
   });
 });

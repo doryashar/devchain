@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { ProviderAdapter } from './provider-adapter.interface';
 import { ClaudeAdapter } from './claude.adapter';
 import { CodexAdapter } from './codex.adapter';
 import { GeminiAdapter } from './gemini.adapter';
 import { OpencodeAdapter } from './opencode.adapter';
 import { UnsupportedProviderError } from '../../../common/errors/error-types';
+import { STORAGE_SERVICE, type StorageService } from '../../storage/interfaces/storage.interface';
 
 /**
  * Factory for resolving ProviderAdapter instances by provider name
@@ -17,6 +18,7 @@ export class ProviderAdapterFactory {
   private readonly adapters: Map<string, ProviderAdapter>;
 
   constructor(
+    @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     claudeAdapter: ClaudeAdapter,
     codexAdapter: CodexAdapter,
     geminiAdapter: GeminiAdapter,
@@ -63,5 +65,26 @@ export class ProviderAdapterFactory {
    */
   getSupportedProviders(): string[] {
     return Array.from(this.adapters.keys());
+  }
+
+  async getPostPasteDelayMsForAgent(agentId: string): Promise<number | undefined> {
+    try {
+      const agent = await this.storage.getAgent(agentId);
+      if (!agent.providerConfigId) return undefined;
+
+      const config = await this.storage.getProfileProviderConfig(agent.providerConfigId);
+
+      let providerName = config.providerName;
+      if (!providerName) {
+        const provider = await this.storage.getProvider(config.providerId);
+        providerName = provider.name;
+      }
+      if (!providerName) return undefined;
+
+      const adapter = this.adapters.get(providerName.toLowerCase());
+      return adapter?.runtimePromptBehavior?.postPasteDelayMs;
+    } catch {
+      return undefined;
+    }
   }
 }

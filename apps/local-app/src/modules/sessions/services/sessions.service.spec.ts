@@ -67,7 +67,7 @@ describe('SessionsService', () => {
   let sqlitePrepare: jest.Mock;
   let insertRunMock: jest.Mock;
   let terminalGateway: { broadcastEvent: jest.Mock };
-  let providerAdapterFactory: { getAdapter: jest.Mock };
+  let providerAdapterFactory: { getAdapter: jest.Mock; getPostPasteDelayMsForAgent: jest.Mock };
   let service: SessionsService;
 
   beforeEach(() => {
@@ -165,6 +165,7 @@ describe('SessionsService', () => {
         providerName: 'claude',
         launchInitialPromptBehavior: undefined,
       }),
+      getPostPasteDelayMsForAgent: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new SessionsService(
@@ -3154,6 +3155,67 @@ describe('SessionsService', () => {
     // Verify tmux session was destroyed
     expect(tmuxService.destroySession).toHaveBeenCalledWith('tmux-session');
   });
+
+  describe('injectTextIntoSession postPasteDelayMs', () => {
+    function mockSessionRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'session-1',
+        epic_id: null,
+        agent_id: 'agent-1',
+        tmux_session_id: 'tmux-1',
+        status: 'running',
+        started_at: '2024-01-01T00:00:00Z',
+        ended_at: null,
+        last_activity_at: null,
+        activity_state: null,
+        busy_since: null,
+        transcript_path: null,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T00:00:00Z',
+        ...overrides,
+      };
+    }
+
+    it('resolves postPasteDelayMs for Gemini agent and passes to delivery helper', async () => {
+      providerAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(1500);
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(mockSessionRow()),
+      });
+
+      await service.injectTextIntoSession('session-1', 'hello');
+
+      expect(providerAdapterFactory.getPostPasteDelayMsForAgent).toHaveBeenCalledWith('agent-1');
+      const pasteCall = tmuxService.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall[2]).toHaveProperty('postPasteDelayMs', 1500);
+    });
+
+    it('passes undefined postPasteDelayMs for Claude agent', async () => {
+      providerAdapterFactory.getPostPasteDelayMsForAgent.mockResolvedValue(undefined);
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(mockSessionRow()),
+      });
+
+      await service.injectTextIntoSession('session-1', 'hello');
+
+      const pasteCall = tmuxService.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall[2]?.postPasteDelayMs).toBeUndefined();
+    });
+
+    it('skips factory call when session has no agentId', async () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(mockSessionRow({ agent_id: null })),
+      });
+
+      await service.injectTextIntoSession('session-1', 'hello');
+
+      expect(providerAdapterFactory.getPostPasteDelayMsForAgent).not.toHaveBeenCalled();
+      const pasteCall = tmuxService.pasteAndSubmit.mock.calls[0];
+      expect(pasteCall[2]?.postPasteDelayMs).toBeUndefined();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3191,7 +3253,7 @@ describe('SessionsService.restoreSession', () => {
   let sqliteRunMock: jest.Mock;
   let sqliteAllMock: jest.Mock;
   let terminalGateway: { broadcastEvent: jest.Mock };
-  let providerAdapterFactory: { getAdapter: jest.Mock };
+  let providerAdapterFactory: { getAdapter: jest.Mock; getPostPasteDelayMsForAgent: jest.Mock };
   let service: SessionsService;
 
   const stoppedSessionRow = {
@@ -3307,6 +3369,7 @@ describe('SessionsService.restoreSession', () => {
           argv: ['--resume', 'provider-uuid-123'],
         }),
       }),
+      getPostPasteDelayMsForAgent: jest.fn().mockResolvedValue(undefined),
     };
 
     const moduleRef = {

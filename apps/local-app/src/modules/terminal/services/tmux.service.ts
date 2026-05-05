@@ -17,6 +17,9 @@ const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 const logger = createLogger('TmuxService');
 
+const DEFAULT_POST_PASTE_DELAY_MS = 250;
+const MAX_POST_PASTE_DELAY_MS = 5000;
+
 // Security: Validate tmux session ID to prevent command injection
 // Only allows alphanumeric, dash, underscore, and period
 const SAFE_SESSION_ID_REGEX = /^[a-zA-Z0-9_.-]+$/;
@@ -642,11 +645,23 @@ export class TmuxService implements OnModuleDestroy {
       confirm?: boolean;
       nonce?: string;
       confirmTimeoutMs?: number;
+      postPasteDelayMs?: number;
     },
   ): Promise<void> {
     const bracketed = options?.bracketed ?? true;
-    const delayMs = options?.delayMs ?? 250;
     const submitKeys = options?.submitKeys ?? ['Enter'];
+
+    const rawDelay = options?.delayMs ?? options?.postPasteDelayMs ?? DEFAULT_POST_PASTE_DELAY_MS;
+    const effectiveDelay = Number.isFinite(rawDelay)
+      ? Math.min(MAX_POST_PASTE_DELAY_MS, Math.max(0, rawDelay))
+      : 0;
+
+    if (effectiveDelay > 0 && options?.postPasteDelayMs !== undefined) {
+      logger.info(
+        { sessionName, postPasteDelayMs: effectiveDelay },
+        'Applying post-paste delay before submit',
+      );
+    }
 
     // Optional pre-key handshake: send keys before paste (e.g., Enter to confirm a startup prompt)
     if (options?.preKeys?.length) {
@@ -680,15 +695,16 @@ export class TmuxService implements OnModuleDestroy {
           { sessionName, elapsedMs: confirmation.elapsedMs, method: confirmation.method },
           'Paste delivery confirmed, sending Enter',
         );
+        if (effectiveDelay > 0) {
+          await new Promise((r) => setTimeout(r, effectiveDelay));
+        }
       } else if (confirmation.captureError) {
-        // Capture error: degrade to fixed delay (tmux may be temporarily unavailable)
         logger.warn(
           { sessionName, elapsedMs: confirmation.elapsedMs },
           'Paste confirmation capture error, falling back to fixed delay',
         );
-        await new Promise((r) => setTimeout(r, delayMs));
+        await new Promise((r) => setTimeout(r, effectiveDelay));
       } else {
-        // Nonce not found within timeout and no capture error
         throw new PasteNotConfirmedError(sessionName, {
           nonce: options.nonce,
           elapsedMs: confirmation.elapsedMs,
@@ -696,7 +712,9 @@ export class TmuxService implements OnModuleDestroy {
       }
     } else {
       // Legacy path: fixed delay
-      await new Promise((r) => setTimeout(r, delayMs));
+      if (effectiveDelay > 0) {
+        await new Promise((r) => setTimeout(r, effectiveDelay));
+      }
     }
 
     if (submitKeys.length > 0) {

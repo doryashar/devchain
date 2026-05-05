@@ -403,4 +403,136 @@ describe('SavedFiltersSelect', () => {
       });
     });
   });
+
+  describe('Default filter toggle', () => {
+    const defaultKey = `devchain:board:defaultFilterId:${projectId}`;
+
+    beforeEach(() => {
+      const filters = [
+        { id: 'f1', name: 'Active Tasks', qs: 'st=in-progress' },
+        { id: 'f2', name: 'My Bugs', qs: 'st=todo&tag=bug' },
+      ];
+      window.localStorage.setItem(storageKey, JSON.stringify(filters));
+    });
+
+    it('shows outline star on each filter row when no default is set', async () => {
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        const stars = screen.getAllByRole('button', { name: /set as default filter/i });
+        expect(stars).toHaveLength(2);
+      });
+    });
+
+    it('clicking star sets filter as default and shows filled star', async () => {
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Active Tasks')).toBeInTheDocument();
+      });
+
+      const stars = screen.getAllByRole('button', { name: /set as default filter/i });
+      fireEvent.click(stars[0]);
+
+      expect(window.localStorage.getItem(defaultKey)).toBe('f1');
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /unset default filter/i })).toBeInTheDocument();
+      });
+    });
+
+    it('clicking filled star clears default', async () => {
+      window.localStorage.setItem(defaultKey, 'f1');
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /unset default filter/i })).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /unset default filter/i }));
+
+      expect(window.localStorage.getItem(defaultKey)).toBeNull();
+      await waitFor(() => {
+        const stars = screen.getAllByRole('button', { name: /set as default filter/i });
+        expect(stars).toHaveLength(2);
+      });
+    });
+
+    it('shows "★ Default" badge only on the default filter row', async () => {
+      window.localStorage.setItem(defaultKey, 'f1');
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('★ Default')).toBeInTheDocument();
+      });
+
+      const badges = screen.getAllByText('★ Default');
+      expect(badges).toHaveLength(1);
+    });
+
+    it('renders active accent on rows matching currentFilters', async () => {
+      renderComponent({ st: 'in-progress' });
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Active Tasks')).toBeInTheDocument();
+      });
+
+      const checkIcons = screen.getAllByRole('button', { name: /saved filters/i }).length;
+      expect(checkIcons).toBeGreaterThanOrEqual(1);
+    });
+
+    it('renders both default badge and active accent on same row', async () => {
+      window.localStorage.setItem(defaultKey, 'f1');
+      renderComponent({ st: 'in-progress' });
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('★ Default')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /unset default filter/i })).toBeInTheDocument();
+      });
+    });
+
+    it('star button is keyboard accessible (Enter activates)', async () => {
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Active Tasks')).toBeInTheDocument();
+      });
+
+      const star = screen.getAllByRole('button', { name: /set as default filter/i })[0];
+      fireEvent.keyDown(star, { key: 'Enter' });
+      fireEvent.click(star);
+
+      expect(window.localStorage.getItem(defaultKey)).toBe('f1');
+    });
+
+    it('deleting the default filter clears star and badge', async () => {
+      window.localStorage.setItem(defaultKey, 'f1');
+      renderComponent();
+      fireEvent.click(screen.getByRole('button', { name: /saved filters/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('★ Default')).toBeInTheDocument();
+      });
+
+      const deleteBtn = screen.getByRole('button', { name: /delete "Active Tasks"/i });
+      fireEvent.click(deleteBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText(/are you sure/i)).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByText('★ Default')).not.toBeInTheDocument();
+        expect(window.localStorage.getItem(defaultKey)).toBeNull();
+      });
+    });
+  });
 });
