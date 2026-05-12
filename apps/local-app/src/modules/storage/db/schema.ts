@@ -3,6 +3,7 @@ import {
   sqliteTable,
   text,
   integer,
+  real,
   unique,
   uniqueIndex,
   index,
@@ -559,6 +560,10 @@ export const sessions = sqliteTable(
     providerSessionId: text('provider_session_id'),
     providerNameAtLaunch: text('provider_name_at_launch'),
     sizeBytes: integer('size_bytes'),
+    costUsd: real('cost_usd'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    primaryModel: text('primary_model'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
@@ -1202,5 +1207,63 @@ export const scheduledEpicRuns = sqliteTable(
     scheduledEpicIdIdx: index('scheduled_epic_runs_scheduled_epic_id_idx').on(
       table.scheduledEpicId,
     ),
+  }),
+);
+
+// ============================================
+// BUDGETS - Cost management and spending limits
+// ============================================
+export const budgets = sqliteTable(
+  'budgets',
+  {
+    id: text('id').primaryKey(),
+    scope: text('scope').notNull(),
+    projectId: text('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+
+    limitUsd: real('limit_usd').notNull(),
+    period: text('period').notNull(),
+    periodStartDate: text('period_start_date'),
+
+    action: text('action').notNull().default('notify'),
+    thresholdPercent: integer('threshold_percent').notNull().default(80),
+
+    currentSpendUsd: real('current_spend_usd').notNull().default(0),
+    spendWindowStart: text('spend_window_start'),
+    lastEvaluatedAt: text('last_evaluated_at'),
+
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => ({
+    projectIdIdx: index('budgets_project_id_idx').on(table.projectId),
+    scopeIdx: index('budgets_scope_idx').on(table.scope),
+    enabledIdx: index('budgets_enabled_idx').on(table.enabled),
+  }),
+);
+
+export const spendRecords = sqliteTable(
+  'spend_records',
+  {
+    id: text('id').primaryKey(),
+    budgetId: text('budget_id')
+      .notNull()
+      .references(() => budgets.id, { onDelete: 'cascade' }),
+    sessionId: text('session_id').references(() => sessions.id, { onDelete: 'set null' }),
+    projectId: text('project_id').notNull(),
+    agentId: text('agent_id'),
+    model: text('model'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    costUsd: real('cost_usd').notNull(),
+    periodStart: text('period_start').notNull(),
+    recordedAt: text('recorded_at').notNull(),
+  },
+  (table) => ({
+    budgetIdIdx: index('spend_records_budget_id_idx').on(table.budgetId),
+    projectIdIdx: index('spend_records_project_id_idx').on(table.projectId),
+    periodStartIdx: index('spend_records_period_start_idx').on(table.periodStart),
   }),
 );

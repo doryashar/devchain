@@ -32,9 +32,9 @@ describe('schema-registry', () => {
       expect(extraSchemas).toEqual([]);
     });
 
-    it('matches the expected tool count (42 tools)', () => {
-      expect(toolSchemaRegistry.size).toBe(42);
-      expect(REGISTERED_TOOL_COUNT).toBe(42);
+    it('matches the expected tool count (44 tools)', () => {
+      expect(toolSchemaRegistry.size).toBe(44);
+      expect(REGISTERED_TOOL_COUNT).toBe(44);
     });
 
     it('has exactly the same count as tool-definitions', () => {
@@ -68,7 +68,7 @@ describe('schema-registry', () => {
   describe('getRegisteredToolNames', () => {
     it('returns all registered tool names', () => {
       const names = getRegisteredToolNames();
-      expect(names.length).toBe(42);
+      expect(names.length).toBe(44);
       expect(names).toContain('devchain_list_sessions');
       expect(names).toContain('devchain_update_epic');
       expect(names).toContain('devchain_resolve_comment');

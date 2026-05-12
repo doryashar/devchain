@@ -23,6 +23,7 @@ import { RecordsDisabledPage } from './pages/RecordsDisabledPage';
 import { RegistryPage } from './pages/RegistryPage';
 import { SkillsPage } from './pages/SkillsPage';
 import { WorktreesPage } from './pages/WorktreesPage';
+import { BudgetsPage } from './pages/BudgetsPage';
 import { CodebaseOverviewDisabledPage } from './pages/CodebaseOverviewDisabledPage';
 import { RuntimeProvider, useRuntime } from './hooks/useRuntime';
 
@@ -100,6 +101,7 @@ function AppRoutes() {
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/automation" element={<AutomationPage />} />
+                <Route path="/budgets" element={<BudgetsPage />} />
                 <Route
                   path="/worktrees"
                   element={

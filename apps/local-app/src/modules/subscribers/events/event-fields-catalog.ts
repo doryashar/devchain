@@ -39,7 +39,7 @@ export interface SubscribableEventDefinition {
   description: string;
 
   /** Category for UI organization */
-  category: 'terminal' | 'session' | 'epic' | 'chat' | 'schedule';
+  category: 'terminal' | 'session' | 'epic' | 'chat' | 'schedule' | 'budget';
 
   /** Available fields in the event payload */
   fields: EventFieldDefinition[];
@@ -286,6 +286,52 @@ export const EVENT_FIELDS_CATALOG: Record<string, SubscribableEventDefinition> =
       { field: 'projectId', label: 'Project ID', type: 'string' },
       { field: 'templateTitle', label: 'Epic Title', type: 'string' },
       { field: 'occurrenceCount', label: 'Occurrence Count', type: 'number' },
+    ],
+  },
+
+  'session.cost_recorded': {
+    name: 'session.cost_recorded',
+    label: 'Session Cost Recorded',
+    description: 'Fired when a session ends and its cost is persisted',
+    category: 'session',
+    fields: [
+      { field: 'sessionId', label: 'Session ID', type: 'string' },
+      { field: 'agentId', label: 'Agent ID', type: 'string', nullable: true },
+      { field: 'projectId', label: 'Project ID', type: 'string' },
+      { field: 'costUsd', label: 'Cost (USD)', type: 'number' },
+      { field: 'inputTokens', label: 'Input Tokens', type: 'number', nullable: true },
+      { field: 'outputTokens', label: 'Output Tokens', type: 'number', nullable: true },
+      { field: 'primaryModel', label: 'Primary Model', type: 'string', nullable: true },
+    ],
+  },
+
+  'budget.threshold_exceeded': {
+    name: 'budget.threshold_exceeded',
+    label: 'Budget Threshold Exceeded',
+    description: 'Fired when spending reaches the configured threshold percentage of a budget',
+    category: 'budget',
+    fields: [
+      { field: 'budgetId', label: 'Budget ID', type: 'string' },
+      { field: 'projectId', label: 'Project ID', type: 'string', nullable: true },
+      { field: 'budgetName', label: 'Budget Name', type: 'string' },
+      { field: 'currentSpendUsd', label: 'Current Spend (USD)', type: 'number' },
+      { field: 'limitUsd', label: 'Limit (USD)', type: 'number' },
+      { field: 'thresholdPercent', label: 'Threshold %', type: 'number' },
+    ],
+  },
+
+  'budget.exceeded': {
+    name: 'budget.exceeded',
+    label: 'Budget Exceeded',
+    description: 'Fired when spending reaches or exceeds the budget limit',
+    category: 'budget',
+    fields: [
+      { field: 'budgetId', label: 'Budget ID', type: 'string' },
+      { field: 'projectId', label: 'Project ID', type: 'string', nullable: true },
+      { field: 'budgetName', label: 'Budget Name', type: 'string' },
+      { field: 'currentSpendUsd', label: 'Current Spend (USD)', type: 'number' },
+      { field: 'limitUsd', label: 'Limit (USD)', type: 'number' },
+      { field: 'action', label: 'Enforcement Action', type: 'string' },
     ],
   },
 };

@@ -155,6 +155,7 @@ export class SessionsService {
   private sqlite: Database.Database;
   private terminalGatewayRef?: TerminalGateway;
   private eventsServiceRef?: EventsService;
+  private budgetsServiceRef?: import('../../budgets/services/budgets.service').BudgetsService;
 
   constructor(
     @Inject(DB_CONNECTION) private readonly db: BetterSQLite3Database,
@@ -470,6 +471,20 @@ export class SessionsService {
       // --- Helper 1: Resolve launch target (agent, project, epic, provider) ---
       const { agent, project, epic, profile, provider, options, configEnv } =
         await this.resolveLaunchTarget({ agentId, projectId, epicId });
+
+      // --- Budget guard: block session launch if budget exceeded ---
+      try {
+        const budgetsService = this.getBudgetsService();
+        if (budgetsService) {
+          const { blocked, reason } = await budgetsService.checkBudgetBlock(project.id);
+          if (blocked) {
+            throw new ForbiddenException(reason ?? 'Budget limit exceeded — session launch blocked');
+          }
+        }
+      } catch (error) {
+        if (error instanceof ForbiddenException) throw error;
+        logger.warn({ error, projectId: project.id }, 'Budget check failed, allowing session launch');
+      }
 
       // Recommend enabling auto-compact for Claude when it's disabled (non-blocking).
       if (provider.name.toLowerCase() === 'claude') {
@@ -1820,6 +1835,18 @@ export class SessionsService {
       }
     }
     return this.eventsServiceRef;
+  }
+
+  private getBudgetsService(): import('../../budgets/services/budgets.service').BudgetsService | null {
+    try {
+      if (!this.budgetsServiceRef) {
+        const { BudgetsService } = require('../../budgets/services/budgets.service');
+        this.budgetsServiceRef = this.moduleRef.get(BudgetsService, { strict: false }) ?? undefined;
+      }
+      return this.budgetsServiceRef ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async loadTeamsForAgentOrEmpty(agentId: string | undefined): Promise<Team[]> {

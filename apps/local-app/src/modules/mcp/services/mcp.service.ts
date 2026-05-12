@@ -69,6 +69,7 @@ import {
   handleTeamsDeleteAgent,
   handleDevchainTeam,
 } from './handlers/teams-tools';
+import { handleGetBudget, handleGetSpend } from './handlers/budget-tools';
 import { suggestNestedPath } from '../utils/param-suggestion';
 import { SessionContextResolver } from './utils/session-context-resolver';
 import { ResourceResolver } from './utils/resource-resolver';
@@ -133,6 +134,8 @@ const TOOL_HANDLER_ENTRIES: Array<[string, McpToolHandler]> = [
   ['devchain_reply_comment', handleReplyComment],
   ['devchain_resolve_comment', handleResolveComment],
   ['devchain_apply_suggestion', handleApplySuggestion],
+  ['devchain_get_budget', handleGetBudget],
+  ['devchain_get_spend', handleGetSpend],
 ];
 
 @Injectable()

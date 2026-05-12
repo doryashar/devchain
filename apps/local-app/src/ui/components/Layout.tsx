@@ -55,6 +55,7 @@ import {
   GitCompareArrows,
   GitBranch,
   UsersRound,
+  DollarSign,
 } from 'lucide-react';
 import { ThemeSelect, type ThemeValue, getStoredTheme } from '@/ui/components/ThemeSelect';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/components/ui/popover';
@@ -134,6 +135,7 @@ const navSections: NavSection[] = [
       { label: 'Events', path: '/events', icon: Activity },
       { label: 'Messages', path: '/messages', icon: Inbox },
       { label: 'Automation', path: '/automation', icon: Zap },
+      { label: 'Budgets', path: '/budgets', icon: DollarSign },
       { label: 'Settings', path: '/settings', icon: Settings },
     ],
   },

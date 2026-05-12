@@ -621,3 +621,57 @@ export interface ScheduledEpicRun {
 }
 
 export type CreateScheduledEpicRun = Omit<ScheduledEpicRun, 'id'>;
+
+// ============================================
+// BUDGETS - Cost management and spending limits
+// ============================================
+
+export type BudgetScope = 'project' | 'global';
+export type BudgetPeriod = 'daily' | 'weekly' | 'monthly' | 'lifetime';
+export type BudgetAction = 'notify' | 'block' | 'kill';
+
+export interface Budget {
+  id: string;
+  scope: BudgetScope;
+  projectId: string | null;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  limitUsd: number;
+  period: BudgetPeriod;
+  periodStartDate: string | null;
+  action: BudgetAction;
+  thresholdPercent: number;
+  currentSpendUsd: number;
+  spendWindowStart: string | null;
+  lastEvaluatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateBudget = Omit<Budget, 'id' | 'currentSpendUsd' | 'spendWindowStart' | 'lastEvaluatedAt' | 'createdAt' | 'updatedAt'>;
+export type UpdateBudget = Partial<Omit<Budget, 'id' | 'scope' | 'projectId' | 'createdAt' | 'updatedAt'>>;
+
+export interface SpendRecord {
+  id: string;
+  budgetId: string;
+  sessionId: string | null;
+  projectId: string;
+  agentId: string | null;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number;
+  periodStart: string;
+  recordedAt: string;
+}
+
+export type CreateSpendRecord = Omit<SpendRecord, 'id'>;
+
+export interface BudgetStatus {
+  budget: Budget;
+  percentUsed: number;
+  remainingUsd: number;
+  isThresholdExceeded: boolean;
+  isLimitExceeded: boolean;
+}

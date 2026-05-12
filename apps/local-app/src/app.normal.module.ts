@@ -29,6 +29,7 @@ import { HooksModule } from './modules/hooks/hooks.module';
 import { SessionReaderModule } from './modules/session-reader/session-reader.module';
 import { TeamsModule } from './modules/teams/teams.module';
 import { SchedulesModule } from './modules/schedules/schedules.module';
+import { BudgetsModule } from './modules/budgets/budgets.module';
 import { DataSeederModule } from './modules/seeders/seeders.module';
 import { CodebaseOverviewAnalyzerModule } from './modules/codebase-overview-analyzer/codebase-overview-analyzer.module';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
@@ -71,6 +72,7 @@ import { AllWsExceptionsFilter } from './common/filters/ws-exception.filter';
     SessionReaderModule,
     TeamsModule,
     SchedulesModule,
+    BudgetsModule,
     CodebaseOverviewAnalyzerModule,
   ],
   controllers: [],

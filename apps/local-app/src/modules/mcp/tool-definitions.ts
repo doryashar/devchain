@@ -945,5 +945,37 @@ export function getToolDefinitions() {
         additionalProperties: false,
       },
     },
+    {
+      name: 'devchain_get_budget',
+      description:
+        'Get current budget status for your project. Returns spending, limits, remaining amounts, and whether thresholds have been exceeded. Use this to self-regulate when approaching budget limits.',
+      inputSchema: {
+        type: 'object',
+        required: ['sessionId'],
+        properties: {
+          sessionId: {
+            type: 'string',
+            description: 'Session ID (full UUID or 8+ char prefix)',
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'devchain_get_spend',
+      description:
+        'Get spend breakdown for your project. Returns total spend aggregated by model and agent within the current budget period.',
+      inputSchema: {
+        type: 'object',
+          required: ['sessionId'],
+        properties: {
+          sessionId: {
+            type: 'string',
+            description: 'Session ID (full UUID or 8+ char prefix)',
+          },
+        },
+        additionalProperties: false,
+      },
+    },
   ];
 }

@@ -52,6 +52,11 @@ import {
   UpdateScheduledEpic,
   ScheduledEpicRun,
   CreateScheduledEpicRun,
+  Budget,
+  CreateBudget,
+  UpdateBudget,
+  SpendRecord,
+  CreateSpendRecord,
   Review,
   CreateReview,
   UpdateReview,
@@ -508,6 +513,21 @@ export interface ScheduledEpicStorage {
   listScheduledEpicRuns(scheduledEpicId: string): Promise<ScheduledEpicRun[]>;
 }
 
+export interface BudgetStorage {
+  listBudgets(scope?: string, projectId?: string): Promise<Budget[]>;
+  getBudget(id: string): Promise<Budget | null>;
+  createBudget(data: CreateBudget): Promise<Budget>;
+  updateBudget(id: string, data: UpdateBudget): Promise<Budget>;
+  deleteBudget(id: string): Promise<void>;
+  listEnabledBudgetsByProject(projectId: string): Promise<Budget[]>;
+  listEnabledGlobalBudgets(): Promise<Budget[]>;
+  createSpendRecord(data: CreateSpendRecord): Promise<SpendRecord>;
+  listSpendRecords(budgetId: string, periodStart?: string): Promise<SpendRecord[]>;
+  getProjectSpend(projectId: string, since: string): Promise<number>;
+  getGlobalSpend(since: string): Promise<number>;
+  updateSessionCost(sessionId: string, costUsd: number | null, inputTokens: number | null, outputTokens: number | null, primaryModel: string | null): Promise<void>;
+}
+
 export interface ReviewStorage {
   createReview(data: CreateReview): Promise<Review>;
   getReview(id: string): Promise<Review>;
@@ -549,6 +569,7 @@ export interface StorageService
     WatcherStorage,
     SubscriberStorage,
     ScheduledEpicStorage,
+    BudgetStorage,
     ReviewStorage {}
 
 export const STORAGE_SERVICE = 'STORAGE_SERVICE';

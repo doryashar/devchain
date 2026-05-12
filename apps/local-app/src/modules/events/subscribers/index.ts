@@ -10,6 +10,7 @@ import { SubEpicCreatedNotifierSubscriber } from './sub-epic-created-notifier.su
 import { TeamConfigUpdatedNotifierSubscriber } from './team-config-updated-notifier.subscriber';
 import { TeamMembershipChangedNotifierSubscriber } from './team-membership-changed-notifier.subscriber';
 import { ProjectStateBroadcasterSubscriber } from './project-state-broadcaster.subscriber';
+import { CostRecordingSubscriber } from './cost-recording.subscriber';
 
 export const subscribers: Provider[] = [
   EpicAssignmentNotifierSubscriber,
@@ -23,4 +24,5 @@ export const subscribers: Provider[] = [
   WorktreeBroadcasterSubscriber,
   TranscriptBroadcasterSubscriber,
   ProjectStateBroadcasterSubscriber,
+  CostRecordingSubscriber,
 ];

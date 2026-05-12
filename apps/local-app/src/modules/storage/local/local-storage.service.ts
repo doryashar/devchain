@@ -72,6 +72,11 @@ import {
   UpdateScheduledEpic,
   ScheduledEpicRun,
   CreateScheduledEpicRun,
+  Budget,
+  CreateBudget,
+  UpdateBudget,
+  SpendRecord,
+  CreateSpendRecord,
   Review,
   CreateReview,
   UpdateReview,
@@ -109,6 +114,7 @@ import { SkillSourceStorageDelegate } from './delegates/skill-source.delegate';
 import { StatusStorageDelegate } from './delegates/status.delegate';
 import { SubscriberStorageDelegate } from './delegates/subscriber.delegate';
 import { ScheduledEpicStorageDelegate } from './delegates/scheduled-epic.delegate';
+import { BudgetStorageDelegate } from './delegates/budget.delegate';
 import { TagStorageDelegate } from './delegates/tag.delegate';
 import { WatcherStorageDelegate } from './delegates/watcher.delegate';
 
@@ -139,6 +145,7 @@ export class LocalStorageService implements StorageService {
   private readonly watcherDelegate: WatcherStorageDelegate;
   private readonly subscriberDelegate: SubscriberStorageDelegate;
   private readonly scheduledEpicDelegate: ScheduledEpicStorageDelegate;
+  private readonly budgetDelegate: BudgetStorageDelegate;
   private readonly guestDelegate: GuestStorageDelegate;
   private readonly reviewDelegate: ReviewStorageDelegate;
   private readonly providerModelDelegate: ProviderModelStorageDelegate;
@@ -197,6 +204,7 @@ export class LocalStorageService implements StorageService {
     this.watcherDelegate = new WatcherStorageDelegate(context);
     this.subscriberDelegate = new SubscriberStorageDelegate(context);
     this.scheduledEpicDelegate = new ScheduledEpicStorageDelegate(context);
+    this.budgetDelegate = new BudgetStorageDelegate(context);
     this.guestDelegate = new GuestStorageDelegate(context);
     this.reviewDelegate = new ReviewStorageDelegate(context, {
       getReview: (id) => this.getReview(id),
@@ -829,6 +837,64 @@ export class LocalStorageService implements StorageService {
 
   async listScheduledEpicRuns(scheduledEpicId: string): Promise<ScheduledEpicRun[]> {
     return this.scheduledEpicDelegate.listScheduledEpicRuns(scheduledEpicId);
+  }
+
+  // ============================================
+  // BUDGETS - Cost management and spending limits
+  // ============================================
+
+  async listBudgets(scope?: string, projectId?: string): Promise<Budget[]> {
+    return this.budgetDelegate.listBudgets(scope, projectId);
+  }
+
+  async getBudget(id: string): Promise<Budget | null> {
+    return this.budgetDelegate.getBudget(id);
+  }
+
+  async createBudget(data: CreateBudget): Promise<Budget> {
+    return this.budgetDelegate.createBudget(data);
+  }
+
+  async updateBudget(id: string, data: UpdateBudget): Promise<Budget> {
+    return this.budgetDelegate.updateBudget(id, data);
+  }
+
+  async deleteBudget(id: string): Promise<void> {
+    return this.budgetDelegate.deleteBudget(id);
+  }
+
+  async listEnabledBudgetsByProject(projectId: string): Promise<Budget[]> {
+    return this.budgetDelegate.listEnabledBudgetsByProject(projectId);
+  }
+
+  async listEnabledGlobalBudgets(): Promise<Budget[]> {
+    return this.budgetDelegate.listEnabledGlobalBudgets();
+  }
+
+  async createSpendRecord(data: CreateSpendRecord): Promise<SpendRecord> {
+    return this.budgetDelegate.createSpendRecord(data);
+  }
+
+  async listSpendRecords(budgetId: string, periodStart?: string): Promise<SpendRecord[]> {
+    return this.budgetDelegate.listSpendRecords(budgetId, periodStart);
+  }
+
+  async getProjectSpend(projectId: string, since: string): Promise<number> {
+    return this.budgetDelegate.getProjectSpend(projectId, since);
+  }
+
+  async getGlobalSpend(since: string): Promise<number> {
+    return this.budgetDelegate.getGlobalSpend(since);
+  }
+
+  async updateSessionCost(
+    sessionId: string,
+    costUsd: number | null,
+    inputTokens: number | null,
+    outputTokens: number | null,
+    primaryModel: string | null,
+  ): Promise<void> {
+    return this.budgetDelegate.updateSessionCost(sessionId, costUsd, inputTokens, outputTokens, primaryModel);
   }
 
   // ============================================

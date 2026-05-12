@@ -138,6 +138,10 @@ export const toolSchemaRegistry: ReadonlyMap<string, ZodSchema> = new Map<string
   ['devchain_get_review_comments', GetReviewCommentsParamsSchema],
   ['devchain_reply_comment', ReplyCommentParamsSchema],
   ['devchain_resolve_comment', ResolveCommentParamsSchema],
+
+  // Budget tools
+  ['devchain_get_budget', z.object({ sessionId: z.string().min(1) }).strict()],
+  ['devchain_get_spend', z.object({ sessionId: z.string().min(1) }).strict()],
 ]);
 
 /**

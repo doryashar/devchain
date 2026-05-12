@@ -25,6 +25,9 @@ import { teamConfigUpdatedEvent } from './team.config.updated';
 import { teamMemberAddedEvent } from './team.member.added';
 import { teamMemberRemovedEvent } from './team.member.removed';
 import { scheduledEpicExecutedEvent } from './scheduled-epic.executed';
+import { sessionCostRecordedEvent } from './session.cost-recorded';
+import { budgetThresholdExceededEvent } from './budget.threshold-exceeded';
+import { budgetExceededEvent } from './budget.exceeded';
 
 // Re-export individual event definitions for direct import
 export { settingsTerminalChangedEvent } from './settings.terminal.changed';
@@ -58,6 +61,9 @@ export const eventCatalog = {
   [teamMemberAddedEvent.name]: teamMemberAddedEvent.schema,
   [teamMemberRemovedEvent.name]: teamMemberRemovedEvent.schema,
   [scheduledEpicExecutedEvent.name]: scheduledEpicExecutedEvent.schema,
+  [sessionCostRecordedEvent.name]: sessionCostRecordedEvent.schema,
+  [budgetThresholdExceededEvent.name]: budgetThresholdExceededEvent.schema,
+  [budgetExceededEvent.name]: budgetExceededEvent.schema,
 } as const;
 
 export type EventName = keyof typeof eventCatalog;
