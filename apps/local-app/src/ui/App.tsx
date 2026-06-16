@@ -14,6 +14,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { EventsPage } from './pages/EventsPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { AutomationPage } from './pages/AutomationPage';
+import { ConnectorsPage } from './pages/ConnectorsPage';
 import { ReviewsPageWithSuspense } from './pages/ReviewsPage.lazy';
 import { ReviewDetailPageWithSuspense } from './pages/ReviewDetailPage.lazy';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -97,6 +98,7 @@ function AppRoutes() {
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/automation" element={<AutomationPage />} />
+                <Route path="/connectors" element={<ConnectorsPage />} />
                 <Route
                   path="/worktrees"
                   element={runtimeLoading ? runtimeLoadingElement : <WorktreesPage />}

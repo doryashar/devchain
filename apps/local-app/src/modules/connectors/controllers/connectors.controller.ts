@@ -10,6 +10,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ConnectorsService } from '../services/connectors.service';
+import { TaskimAdapter } from '../adapters/taskim.adapter';
 import {
   CreateConnectorDtoSchema,
   UpdateConnectorDtoSchema,
@@ -18,7 +19,10 @@ import {
 
 @Controller('api/connectors')
 export class ConnectorsController {
-  constructor(private readonly service: ConnectorsService) {}
+  constructor(
+    private readonly service: ConnectorsService,
+    private readonly taskimAdapter: TaskimAdapter,
+  ) {}
 
   @Get()
   async list(@Query('projectId') projectId?: string) {
@@ -92,5 +96,18 @@ export class ConnectorsController {
   @Get(':id/sync-states')
   async listSyncStates(@Param('id') connectorId: string) {
     return this.service.listSyncStates(connectorId);
+  }
+
+  @Post(':id/test')
+  async testConnection(@Param('id') id: string) {
+    const connector = await this.service.get(id);
+    const adapter = connector.type === 'taskim' ? this.taskimAdapter : null;
+    if (!adapter) {
+      return {
+        success: false,
+        error: `Adapter for type "${connector.type}" not implemented`,
+      };
+    }
+    return adapter.testConnection(connector.config);
   }
 }

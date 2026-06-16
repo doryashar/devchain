@@ -65,6 +65,7 @@ import {
   UsersRound,
   Cloud,
   Bell,
+  Plug,
 } from 'lucide-react';
 import { ThemeSelect, type ThemeValue, getStoredTheme } from '@/ui/components/ThemeSelect';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/components/ui/popover';
@@ -146,6 +147,7 @@ const navSections: NavSection[] = [
       { label: 'Profiles', path: '/profiles', icon: Users },
       { label: 'Prompts', path: '/prompts', icon: FileText },
       { label: 'Statuses', path: '/statuses', icon: Layers },
+      { label: 'Connectors', path: '/connectors', icon: Plug },
     ],
   },
   {
