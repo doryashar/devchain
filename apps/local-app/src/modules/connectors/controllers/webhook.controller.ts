@@ -74,7 +74,7 @@ export class WebhookController {
     const now = new Date().toISOString();
 
     if (event.action === 'deleted') {
-      this.logger.info(
+      this.logger.log(
         { connectorId, externalId: event.externalId },
         'External task deleted',
       );
@@ -114,11 +114,10 @@ export class WebhookController {
                 description: event.fields.description ?? undefined,
               },
               epic.version,
-              { actor: { type: 'connector', id: connectorId } },
             );
           }
           await this.storage.updateSyncState(syncState.id, { lastSyncedAt: now });
-          this.logger.info({ epicId: syncState.epicId }, 'Updated epic from webhook');
+          this.logger.log({ epicId: syncState.epicId }, 'Updated epic from webhook');
         } catch (e) {
           this.logger.error({ error: e }, 'Failed to update epic from webhook');
         }
@@ -132,7 +131,6 @@ export class WebhookController {
               title: event.fields.title,
               description: event.fields.description ?? undefined,
             },
-            { actor: { type: 'connector', id: connectorId } },
           );
 
           this.connectorsService.markSyncingFromRemote(epic.id);
@@ -143,7 +141,7 @@ export class WebhookController {
             lastSyncedAt: now,
             lastSyncedHash: null,
           });
-          this.logger.info(
+          this.logger.log(
             { epicId: epic.id, externalId: event.externalId },
             'Created epic from webhook',
           );

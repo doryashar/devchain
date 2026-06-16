@@ -1,0 +1,11 @@
+- make sure we have skills in opencode
+- make sure external agents can connect
+- add connectors to taskim/monday/jira etc
+- use skill instead of MCP? how to force the flow?
+- compare to agency
+- add webhooks
+- show board as list?
+- kanban more control (auto assign to...)
+- different boards?
+- recurring tasks
+- review the teams

@@ -1,0 +1,6 @@
+{
+  "name": "@devchain/codebase-overview",
+  "version": "0.0.0-internal",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts"
+}

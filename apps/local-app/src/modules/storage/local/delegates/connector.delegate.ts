@@ -99,10 +99,11 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
     const { connectorStatusMappings } = await import('../../db/schema');
     const { eq } = await import('drizzle-orm');
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(connectorStatusMappings)
       .where(eq(connectorStatusMappings.connectorId, connectorId));
+    return rows as ConnectorStatusMapping[];
   }
 
   async createStatusMapping(
@@ -111,6 +112,7 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
     const { randomUUID } = await import('crypto');
     const now = new Date().toISOString();
     const { connectorStatusMappings } = await import('../../db/schema');
+    const { eq } = await import('drizzle-orm');
 
     const id = randomUUID();
     await this.db.insert(connectorStatusMappings).values({
@@ -127,7 +129,7 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
       .from(connectorStatusMappings)
       .where(eq(connectorStatusMappings.id, id))
       .limit(1);
-    return rows[0]!;
+    return rows[0] as ConnectorStatusMapping;
   }
 
   async updateStatusMapping(
@@ -157,7 +159,7 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
       .where(eq(connectorStatusMappings.id, id))
       .limit(1);
     if (rows.length === 0) throw new NotFoundError('StatusMapping', id);
-    return rows[0]!;
+    return rows[0] as ConnectorStatusMapping;
   }
 
   async deleteStatusMapping(id: string): Promise<void> {
@@ -269,10 +271,11 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
     const { connectorFieldMappings } = await import('../../db/schema');
     const { eq } = await import('drizzle-orm');
 
-    return this.db
+    const rows = await this.db
       .select()
       .from(connectorFieldMappings)
       .where(eq(connectorFieldMappings.connectorId, connectorId));
+    return rows as ConnectorFieldMapping[];
   }
 
   async createFieldMapping(
@@ -281,6 +284,7 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
     const { randomUUID } = await import('crypto');
     const now = new Date().toISOString();
     const { connectorFieldMappings } = await import('../../db/schema');
+    const { eq } = await import('drizzle-orm');
 
     const id = randomUUID();
     await this.db.insert(connectorFieldMappings).values({
@@ -297,7 +301,7 @@ export class ConnectorStorageDelegate extends BaseStorageDelegate {
       .from(connectorFieldMappings)
       .where(eq(connectorFieldMappings.id, id))
       .limit(1);
-    return rows[0]!;
+    return rows[0] as ConnectorFieldMapping;
   }
 
   async deleteFieldMapping(id: string): Promise<void> {

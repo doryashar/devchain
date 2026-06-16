@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+let QRCodeSVG: React.FC<{ value: string; size: number; level: string; bgColor: string; fgColor: string; includeMargin?: boolean; marginSize?: number }>;
+try {
+  ({ QRCodeSVG } = require('qrcode.react'));
+} catch {
+  QRCodeSVG = () => null;
+}
 import { Button } from '../ui/button';
 import type { QrAuthStatus } from '../../hooks/useQrAuth';
 

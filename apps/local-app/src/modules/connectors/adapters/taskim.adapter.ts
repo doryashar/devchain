@@ -12,10 +12,11 @@ import type { Connector } from '../../storage/models/domain.models';
 
 const logger = createLogger('TaskimAdapter');
 
-interface TaskimConfig extends Connector['config'] {
+interface TaskimConfig {
   apiUrl: string;
   credentials: { email?: string; password?: string; token?: string };
   workspaceId?: string;
+  externalProjectId?: string | null;
 }
 
 interface TokenCache {
