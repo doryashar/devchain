@@ -69,6 +69,17 @@ import {
   CreateScheduledEpicRun,
   UpdateScheduledEpicRun,
   ScheduledEpicRunStatus,
+  Connector,
+  CreateConnector,
+  UpdateConnector,
+  ConnectorStatusMapping,
+  CreateConnectorStatusMapping,
+  UpdateConnectorStatusMapping,
+  ConnectorSyncState,
+  CreateConnectorSyncState,
+  UpdateConnectorSyncState,
+  ConnectorFieldMapping,
+  CreateConnectorFieldMapping,
 } from '../models/domain.models';
 
 export interface ListOptions {
@@ -573,6 +584,29 @@ export interface ReviewStorage {
   markMessageAsRead(messageId: string, agentId: string, readAt: string): Promise<void>;
 }
 
+export interface ConnectorStorage {
+  listConnectors(projectId: string): Promise<Connector[]>;
+  getConnector(id: string): Promise<Connector | null>;
+  createConnector(data: CreateConnector): Promise<Connector>;
+  updateConnector(id: string, data: UpdateConnector): Promise<Connector>;
+  deleteConnector(id: string): Promise<void>;
+
+  listStatusMappings(connectorId: string): Promise<ConnectorStatusMapping[]>;
+  createStatusMapping(data: CreateConnectorStatusMapping): Promise<ConnectorStatusMapping>;
+  updateStatusMapping(id: string, data: UpdateConnectorStatusMapping): Promise<ConnectorStatusMapping>;
+  deleteStatusMapping(id: string): Promise<void>;
+
+  getSyncState(connectorId: string, epicId: string): Promise<ConnectorSyncState | null>;
+  findSyncStateByExternalId(connectorId: string, externalId: string): Promise<ConnectorSyncState | null>;
+  createSyncState(data: CreateConnectorSyncState): Promise<ConnectorSyncState>;
+  updateSyncState(id: string, data: UpdateConnectorSyncState): Promise<ConnectorSyncState>;
+  listSyncStates(connectorId: string): Promise<ConnectorSyncState[]>;
+
+  listFieldMappings(connectorId: string): Promise<ConnectorFieldMapping[]>;
+  createFieldMapping(data: CreateConnectorFieldMapping): Promise<ConnectorFieldMapping>;
+  deleteFieldMapping(id: string): Promise<void>;
+}
+
 export interface StorageService
   extends ProjectStorage,
     StatusStorage,
@@ -590,6 +624,7 @@ export interface StorageService
     WatcherStorage,
     SubscriberStorage,
     ReviewStorage,
-    ScheduledEpicStorage {}
+    ScheduledEpicStorage,
+    ConnectorStorage {}
 
 export const STORAGE_SERVICE = 'STORAGE_SERVICE';

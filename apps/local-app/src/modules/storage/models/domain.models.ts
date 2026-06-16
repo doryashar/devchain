@@ -655,3 +655,68 @@ export type CreateScheduledEpicRun = Omit<
 export type UpdateScheduledEpicRun = Partial<
   Pick<ScheduledEpicRun, 'status' | 'createdEpicId' | 'startedAt' | 'finishedAt' | 'errorMessage'>
 >;
+
+// ============================================
+// CONNECTORS
+// ============================================
+
+export type ConnectorType = 'taskim' | 'monday' | 'jira';
+
+export interface ConnectorConfig {
+  apiUrl: string;
+  credentials: Record<string, string>;
+  workspaceId?: string;
+  [key: string]: unknown;
+}
+
+export interface Connector {
+  id: string;
+  projectId: string;
+  type: ConnectorType;
+  name: string;
+  enabled: boolean;
+  config: ConnectorConfig;
+  externalProjectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateConnector = Omit<Connector, 'id' | 'createdAt' | 'updatedAt'>;
+export type UpdateConnector = Partial<Omit<Connector, 'id' | 'projectId' | 'createdAt' | 'updatedAt'>>;
+
+export interface ConnectorStatusMapping {
+  id: string;
+  connectorId: string;
+  devchainStatusLabel: string;
+  externalStatusId: string;
+  direction: 'both' | 'push' | 'pull';
+  createdAt: string;
+}
+
+export type CreateConnectorStatusMapping = Omit<ConnectorStatusMapping, 'id' | 'createdAt'>;
+export type UpdateConnectorStatusMapping = Partial<Omit<ConnectorStatusMapping, 'id' | 'connectorId' | 'createdAt'>>;
+
+export interface ConnectorSyncState {
+  id: string;
+  connectorId: string;
+  epicId: string;
+  externalId: string;
+  lastSyncedAt: string;
+  lastSyncedHash: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateConnectorSyncState = Omit<ConnectorSyncState, 'id' | 'createdAt' | 'updatedAt'>;
+export type UpdateConnectorSyncState = Partial<Omit<ConnectorSyncState, 'id' | 'createdAt' | 'updatedAt'>>;
+
+export interface ConnectorFieldMapping {
+  id: string;
+  connectorId: string;
+  devchainField: string;
+  externalField: string;
+  transform: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export type CreateConnectorFieldMapping = Omit<ConnectorFieldMapping, 'id' | 'createdAt'>;
