@@ -1238,3 +1238,89 @@ export const automationSubscribers = sqliteTable(
     enabledIdx: index('automation_subscribers_enabled_idx').on(table.enabled),
   }),
 );
+
+// ============================================
+// CONNECTORS - External service sync plugins
+// ============================================
+export const connectors = sqliteTable(
+  'connectors',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    name: text('name').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    config: text('config', { mode: 'json' }).notNull(),
+    externalProjectId: text('external_project_id'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => ({
+    projectIdIdx: index('connectors_project_id_idx').on(table.projectId),
+    typeIdx: index('connectors_type_idx').on(table.type),
+  }),
+);
+
+export const connectorStatusMappings = sqliteTable(
+  'connector_status_mappings',
+  {
+    id: text('id').primaryKey(),
+    connectorId: text('connector_id')
+      .notNull()
+      .references(() => connectors.id, { onDelete: 'cascade' }),
+    devchainStatusLabel: text('devchain_status_label').notNull(),
+    externalStatusId: text('external_status_id').notNull(),
+    direction: text('direction').notNull().default('both'),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => ({
+    connectorIdIdx: index('connector_status_mappings_connector_id_idx').on(table.connectorId),
+  }),
+);
+
+export const connectorSyncState = sqliteTable(
+  'connector_sync_state',
+  {
+    id: text('id').primaryKey(),
+    connectorId: text('connector_id')
+      .notNull()
+      .references(() => connectors.id, { onDelete: 'cascade' }),
+    epicId: text('epic_id')
+      .notNull()
+      .references(() => epics.id, { onDelete: 'cascade' }),
+    externalId: text('external_id').notNull(),
+    lastSyncedAt: text('last_synced_at').notNull(),
+    lastSyncedHash: text('last_synced_hash'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => ({
+    connectorEpicIdx: uniqueIndex('connector_sync_state_connector_epic_idx').on(
+      table.connectorId,
+      table.epicId,
+    ),
+    connectorExternalIdx: index('connector_sync_state_connector_external_idx').on(
+      table.connectorId,
+      table.externalId,
+    ),
+  }),
+);
+
+export const connectorFieldMappings = sqliteTable(
+  'connector_field_mappings',
+  {
+    id: text('id').primaryKey(),
+    connectorId: text('connector_id')
+      .notNull()
+      .references(() => connectors.id, { onDelete: 'cascade' }),
+    devchainField: text('devchain_field').notNull(),
+    externalField: text('external_field').notNull(),
+    transform: text('transform', { mode: 'json' }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => ({
+    connectorIdIdx: index('connector_field_mappings_connector_id_idx').on(table.connectorId),
+  }),
+);
