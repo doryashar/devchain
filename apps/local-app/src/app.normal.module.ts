@@ -20,6 +20,7 @@ import { AgentsModule } from './modules/agents/agents.module';
 import { StatusesModule } from './modules/statuses/statuses.module';
 import { EpicsModule } from './modules/epics/epics.module';
 import { ScheduledEpicsModule } from './modules/scheduled-epics/scheduled-epics.module';
+import { ConnectorsModule } from './modules/connectors/connectors.module';
 import { RecordsModule } from './modules/records/records.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { FsModule } from './modules/fs/fs.module';
@@ -64,6 +65,7 @@ import { AllWsExceptionsFilter } from './common/filters/ws-exception.filter';
     StatusesModule,
     EpicsModule,
     ScheduledEpicsModule,
+    ConnectorsModule,
     RecordsModule,
     DocumentsModule,
     FsModule,
