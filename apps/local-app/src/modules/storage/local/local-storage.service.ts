@@ -90,6 +90,17 @@ import {
   ScheduledEpicRun,
   CreateScheduledEpicRun,
   UpdateScheduledEpicRun,
+  Connector,
+  CreateConnector,
+  UpdateConnector,
+  ConnectorStatusMapping,
+  CreateConnectorStatusMapping,
+  UpdateConnectorStatusMapping,
+  ConnectorSyncState,
+  CreateConnectorSyncState,
+  UpdateConnectorSyncState,
+  ConnectorFieldMapping,
+  CreateConnectorFieldMapping,
 } from '../models/domain.models';
 import { ValidationError, ConflictError } from '../../../common/errors/error-types';
 import { createLogger } from '../../../common/logging/logger';
@@ -117,6 +128,7 @@ import { SubscriberStorageDelegate } from './delegates/subscriber.delegate';
 import { TagStorageDelegate } from './delegates/tag.delegate';
 import { ScheduledEpicStorageDelegate } from './delegates/scheduled-epic.delegate';
 import { WatcherStorageDelegate } from './delegates/watcher.delegate';
+import { ConnectorStorageDelegate } from './delegates/connector.delegate';
 
 const logger = createLogger('LocalStorageService');
 
@@ -148,6 +160,7 @@ export class LocalStorageService implements StorageService {
   private readonly reviewDelegate: ReviewStorageDelegate;
   private readonly providerModelDelegate: ProviderModelStorageDelegate;
   private readonly scheduledEpicDelegate: ScheduledEpicStorageDelegate;
+  private readonly connectorDelegate: ConnectorStorageDelegate;
 
   constructor(@Inject(DB_CONNECTION) private readonly db: BetterSQLite3Database) {
     const context = createStorageDelegateContext(this.db);
@@ -208,6 +221,7 @@ export class LocalStorageService implements StorageService {
       getReviewComment: (id) => this.getReviewComment(id),
     });
     this.scheduledEpicDelegate = new ScheduledEpicStorageDelegate(context);
+    this.connectorDelegate = new ConnectorStorageDelegate(context);
     logger.info('LocalStorageService initialized');
   }
 
@@ -1002,5 +1016,93 @@ export class LocalStorageService implements StorageService {
 
   async claimScheduledEpicRun(runId: string): Promise<ClaimRunResult> {
     return this.scheduledEpicDelegate.claimScheduledEpicRun(runId);
+  }
+
+  // ============================================
+  // CONNECTORS
+  // ============================================
+
+  async listConnectors(projectId: string): Promise<Connector[]> {
+    return this.connectorDelegate.listConnectors(projectId);
+  }
+
+  async getConnector(id: string): Promise<Connector | null> {
+    return this.connectorDelegate.getConnector(id);
+  }
+
+  async createConnector(data: CreateConnector): Promise<Connector> {
+    return this.connectorDelegate.createConnector(data);
+  }
+
+  async updateConnector(id: string, data: UpdateConnector): Promise<Connector> {
+    return this.connectorDelegate.updateConnector(id, data);
+  }
+
+  async deleteConnector(id: string): Promise<void> {
+    return this.connectorDelegate.deleteConnector(id);
+  }
+
+  async listStatusMappings(connectorId: string): Promise<ConnectorStatusMapping[]> {
+    return this.connectorDelegate.listStatusMappings(connectorId);
+  }
+
+  async createStatusMapping(
+    data: CreateConnectorStatusMapping,
+  ): Promise<ConnectorStatusMapping> {
+    return this.connectorDelegate.createStatusMapping(data);
+  }
+
+  async updateStatusMapping(
+    id: string,
+    data: UpdateConnectorStatusMapping,
+  ): Promise<ConnectorStatusMapping> {
+    return this.connectorDelegate.updateStatusMapping(id, data);
+  }
+
+  async deleteStatusMapping(id: string): Promise<void> {
+    return this.connectorDelegate.deleteStatusMapping(id);
+  }
+
+  async getSyncState(
+    connectorId: string,
+    epicId: string,
+  ): Promise<ConnectorSyncState | null> {
+    return this.connectorDelegate.getSyncState(connectorId, epicId);
+  }
+
+  async findSyncStateByExternalId(
+    connectorId: string,
+    externalId: string,
+  ): Promise<ConnectorSyncState | null> {
+    return this.connectorDelegate.findSyncStateByExternalId(connectorId, externalId);
+  }
+
+  async createSyncState(data: CreateConnectorSyncState): Promise<ConnectorSyncState> {
+    return this.connectorDelegate.createSyncState(data);
+  }
+
+  async updateSyncState(
+    id: string,
+    data: UpdateConnectorSyncState,
+  ): Promise<ConnectorSyncState> {
+    return this.connectorDelegate.updateSyncState(id, data);
+  }
+
+  async listSyncStates(connectorId: string): Promise<ConnectorSyncState[]> {
+    return this.connectorDelegate.listSyncStates(connectorId);
+  }
+
+  async listFieldMappings(connectorId: string): Promise<ConnectorFieldMapping[]> {
+    return this.connectorDelegate.listFieldMappings(connectorId);
+  }
+
+  async createFieldMapping(
+    data: CreateConnectorFieldMapping,
+  ): Promise<ConnectorFieldMapping> {
+    return this.connectorDelegate.createFieldMapping(data);
+  }
+
+  async deleteFieldMapping(id: string): Promise<void> {
+    return this.connectorDelegate.deleteFieldMapping(id);
   }
 }
