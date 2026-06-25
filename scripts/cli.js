@@ -1292,10 +1292,6 @@ function getPreferredDevApiPort(optsPort, containerMode, env = process.env) {
   return 3000;
 }
 
-function isTruthyEnvValue(value) {
-  return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
-}
-
 function getDevModeSpawnConfig({ containerMode, port, env = process.env }) {
   const ui = getDevUiConfig(containerMode);
   return {
@@ -1347,8 +1343,7 @@ async function main(argv) {
       'Respects LOG_LEVEL env var if set.'
     )
     .option('--dev', 'Development mode with hot reload (spawns nest --watch + vite)')
-    .option('--cloud', 'Enable Cloud and Notifications UI features for this run')
-    .option('--cloude', '[alias] Enable Cloud and Notifications UI features for this run')
+    .option('--no-cloud', 'Disable Cloud and Notifications UI features for this run')
     .option('--internal-detached-child', '[internal] Marker for detached child process')
     .action(async (rawArgs, opts) => {
       const { HostResolver } = await import(resolveSharedModuleSpecifier());
@@ -1368,11 +1363,10 @@ async function main(argv) {
         process.exit(1);
       }
       const worktreeRuntimeMode = isWorktreeRuntimeModeEnabled(worktreeRuntimeType);
-      const cloudUiEnabled = Boolean(
-        opts.cloud || opts.cloude || isTruthyEnvValue(process.env.DEVCHAIN_CLOUD_UI_ENABLED),
-      );
-      if (cloudUiEnabled) {
-        process.env.DEVCHAIN_CLOUD_UI_ENABLED = '1';
+      // Cloud UI is on by default. Commander defaults opts.cloud to `true`
+      // and sets it to `false` only when --no-cloud is passed.
+      if (opts.cloud === false) {
+        process.env.DEVCHAIN_CLOUD_UI_ENABLED = '0';
       }
 
       // Check if "help" was passed as an argument

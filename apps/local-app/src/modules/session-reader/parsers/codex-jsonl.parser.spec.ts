@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import type { PricingServiceInterface } from '../services/pricing.interface';
 import { buildChunks } from '../builders/chunk-builder';
 import { getHeaderTokens } from '../../../ui/utils/ai-group-enhancer';
+import { estimateMessageTokens } from '../adapters/utils/estimate-content-tokens';
 
 const mockLoggerWarn = jest.fn();
 jest.mock('../../../common/logging/logger', () => ({
@@ -297,22 +298,166 @@ describe('CodexJsonlParser', () => {
 
     const result = await parseCodexJsonl(file);
 
-    // user, assistant (with tool call), user (tool result), assistant (text)
-    expect(result.messages.length).toBeGreaterThanOrEqual(3);
+    // The whole tool turn coalesces into ONE assistant message: user + assistant
+    // (tool_call + folded result + final text). 2 messages, not 3 — a tool turn counts
+    // as a single conversational turn (cross-provider invariant).
+    expect(result.messages).toHaveLength(2);
+    expect(result.metrics.messageCount).toBe(2);
+    expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
 
-    // Find the assistant message with tool calls
-    const assistantWithTools = result.messages.find(
-      (m) => m.role === 'assistant' && m.toolCalls.length > 0,
-    );
-    expect(assistantWithTools).toBeDefined();
-    expect(assistantWithTools!.toolCalls[0].name).toBe('read_file');
-    expect(assistantWithTools!.toolCalls[0].id).toBe('call_1');
+    // The single assistant carries the tool call AND its folded result.
+    const assistant = result.messages[1];
+    expect(assistant.toolCalls).toHaveLength(1);
+    expect(assistant.toolCalls[0].name).toBe('read_file');
+    expect(assistant.toolCalls[0].id).toBe('call_1');
+    expect(assistant.toolResults).toHaveLength(1);
+    expect(assistant.toolResults[0].toolCallId).toBe('call_1');
+    expect(assistant.toolResults[0].content).toBe('file contents here');
+    // Ordering preserved: tool_call → tool_result → final text.
+    expect(assistant.content.map((b) => b.type)).toEqual(['tool_call', 'tool_result', 'text']);
+    // No synthetic user-role tool-result message.
+    expect(result.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+  });
 
-    // Find the tool result message
-    const toolResultMsg = result.messages.find((m) => m.toolResults.length > 0);
-    expect(toolResultMsg).toBeDefined();
-    expect(toolResultMsg!.toolResults[0].toolCallId).toBe('call_1');
-    expect(toolResultMsg!.toolResults[0].content).toBe('file contents here');
+  it('folds N tool calls + N results into one assistant turn (messageCount not inflated)', async () => {
+    const file = tmpFile([
+      sessionMeta(),
+      turnContext(),
+      taskStarted(),
+      userMessage('Do three things'),
+      functionCall('call_1', 'read_file', { path: '/a' }),
+      functionCall('call_2', 'read_file', { path: '/b' }),
+      functionCall('call_3', 'read_file', { path: '/c' }),
+      functionCallOutput('call_1', 'contents a'),
+      functionCallOutput('call_2', 'contents b'),
+      functionCallOutput('call_3', 'contents c'),
+      assistantMessage('Done with all three'),
+      taskComplete(),
+    ]);
+
+    const result = await parseCodexJsonl(file);
+
+    // 2 messages: user + ONE coalesced assistant (3 tool calls + 3 results + final text).
+    // The whole tool turn is a single conversational turn.
+    expect(result.metrics.messageCount).toBe(2);
+    expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+
+    // All tool calls and results are preserved on the one assistant turn (no data loss).
+    const assistant = result.messages[1];
+    expect(assistant.toolCalls).toHaveLength(3);
+    expect(assistant.toolResults).toHaveLength(3);
+    expect(assistant.toolResults.map((r) => r.toolCallId)).toEqual(['call_1', 'call_2', 'call_3']);
+
+    // No synthetic user-role tool-result message is emitted.
+    expect(result.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+
+    // Tool result content blocks render within the assistant message; final text last.
+    const toolResultBlocks = assistant.content.filter((b) => b.type === 'tool_result');
+    expect(toolResultBlocks).toHaveLength(3);
+    expect(assistant.content[assistant.content.length - 1]).toEqual({
+      type: 'text',
+      text: 'Done with all three',
+    });
+  });
+
+  it('coalesces sequential tool rounds in one turn into a single assistant (Bug-A reopened)', async () => {
+    const file = tmpFile([
+      sessionMeta(),
+      turnContext(),
+      taskStarted(),
+      userMessage('Fix the bug'),
+      assistantMessage('Let me check', '2026-02-24T10:00:04.000Z'),
+      functionCall('call_1', 'read_file', { path: 'src/index.ts' }, '2026-02-24T10:00:05.000Z'),
+      functionCallOutput('call_1', 'file contents', '2026-02-24T10:00:06.000Z'),
+      assistantMessage('Found it, applying fix', '2026-02-24T10:00:07.000Z'),
+      functionCall('call_2', 'write_file', { path: 'src/index.ts' }, '2026-02-24T10:00:08.000Z'),
+      functionCallOutput('call_2', 'ok', '2026-02-24T10:00:09.000Z'),
+      assistantMessage('All done', '2026-02-24T10:00:10.000Z'),
+      taskComplete(),
+    ]);
+
+    const result = await parseCodexJsonl(file);
+
+    // 2 messages: user + ONE coalesced assistant spanning BOTH rounds (was 4 pre-fix).
+    // A tool-using turn = a single conversational turn regardless of round count.
+    expect(result.metrics.messageCount).toBe(2);
+    expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+
+    const assistant = result.messages[1];
+    // Both rounds' calls + results land on the one assistant.
+    expect(assistant.toolCalls.map((c) => c.id)).toEqual(['call_1', 'call_2']);
+    expect(assistant.toolResults.map((r) => r.toolCallId)).toEqual(['call_1', 'call_2']);
+    // Ordering preserved across rounds: text → call → result → text → call → result → text.
+    expect(assistant.content.map((b) => b.type)).toEqual([
+      'text',
+      'tool_call',
+      'tool_result',
+      'text',
+      'tool_call',
+      'tool_result',
+      'text',
+    ]);
+    // No synthetic user-role tool-result message.
+    expect(result.messages.filter((m) => m.role === 'user')).toHaveLength(1);
+  });
+
+  it('does not double-count folded tool-result tokens in visibleContextTokens (open buffer)', async () => {
+    // Regression: sequential tool rounds coalesce into ONE still-open assistant buffer. The
+    // mid-turn flushPendingToolResults folds each round's result into that OPEN buffer; the
+    // whole coalesced content is then counted once when flushAssistantBuffer runs. Counting
+    // the tool-result tokens again at fold time inflated visibleContextTokens (double-count).
+    const file = tmpFile([
+      sessionMeta(),
+      turnContext(),
+      taskStarted(),
+      userMessage('Fix the bug'),
+      assistantMessage('Let me check', '2026-02-24T10:00:04.000Z'),
+      functionCall('call_1', 'read_file', { path: 'src/index.ts' }, '2026-02-24T10:00:05.000Z'),
+      functionCallOutput('call_1', 'file contents here', '2026-02-24T10:00:06.000Z'),
+      assistantMessage('Found it, applying fix', '2026-02-24T10:00:07.000Z'),
+      functionCall('call_2', 'write_file', { path: 'src/index.ts' }, '2026-02-24T10:00:08.000Z'),
+      functionCallOutput('call_2', 'ok', '2026-02-24T10:00:09.000Z'),
+      assistantMessage('All done', '2026-02-24T10:00:10.000Z'),
+      taskComplete(),
+    ]);
+
+    const result = await parseCodexJsonl(file);
+
+    // No compaction, no sidechain → visibleContextTokens MUST equal the token estimate of the
+    // actual (de-duplicated) message content. A double-count would make it strictly larger.
+    const expectedTokens = estimateMessageTokens(result.messages.flatMap((m) => m.content));
+    expect(result.metrics.visibleContextTokens).toBe(expectedTokens);
+  });
+
+  it('over-merge guard: a real user prompt ends the turn even without turn_complete (unframed)', async () => {
+    // Two separate user exchanges, NO turn_complete framing (unframed transcript). The
+    // user-message flush must terminate the first turn so we get 4 messages, not a single
+    // over-merged assistant.
+    const file = tmpFile([
+      sessionMeta(),
+      turnContext(),
+      userMessage('First question', '2026-02-24T10:00:00.000Z'),
+      assistantMessage('Let me look', '2026-02-24T10:00:01.000Z'),
+      functionCall('call_1', 'read_file', { path: '/a' }, '2026-02-24T10:00:02.000Z'),
+      functionCallOutput('call_1', 'contents a', '2026-02-24T10:00:03.000Z'),
+      assistantMessage('First answer', '2026-02-24T10:00:04.000Z'),
+      userMessage('Second question', '2026-02-24T10:00:05.000Z'),
+      assistantMessage('Second answer', '2026-02-24T10:00:06.000Z'),
+    ]);
+
+    const result = await parseCodexJsonl(file);
+
+    // user, assistant(round folded), user, assistant — two turns, each ends at the prompt.
+    expect(result.metrics.messageCount).toBe(4);
+    expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    // First assistant carries its tool call+result; no cross-turn fold into it afterwards.
+    expect(result.messages[1].toolCalls).toHaveLength(1);
+    expect(result.messages[1].toolResults).toHaveLength(1);
+    expect(result.messages[1].toolResults[0].toolCallId).toBe('call_1');
+    // Second assistant is a clean, separate turn (no leaked tool data).
+    expect(result.messages[3].toolCalls).toHaveLength(0);
+    expect(result.messages[3].toolResults).toHaveLength(0);
+    expect(result.messages.filter((m) => m.role === 'user')).toHaveLength(2);
   });
 
   it('maps local_shell_call to tool call', async () => {
@@ -357,7 +502,7 @@ describe('CodexJsonlParser', () => {
     expect(result.metrics.contextWindowTokens).toBe(128000);
   });
 
-  it('attaches per-turn usage to the last assistant message in a turn', async () => {
+  it('attaches per-turn usage to the single coalesced assistant of a turn', async () => {
     const file = tmpFile([
       sessionMeta(),
       turnContext('o3'),
@@ -372,21 +517,15 @@ describe('CodexJsonlParser', () => {
     ]);
 
     const result = await parseCodexJsonl(file);
-    const firstAssistant = result.messages.find(
-      (m) =>
-        m.role === 'assistant' &&
-        m.content.some((block) => block.type === 'text' && block.text.includes('First assistant')),
-    );
-    const finalAssistant = result.messages.find(
-      (m) =>
-        m.role === 'assistant' &&
-        m.content.some((block) => block.type === 'text' && block.text.includes('Final assistant')),
-    );
-
-    expect(firstAssistant).toBeDefined();
-    expect(firstAssistant!.usage).toBeUndefined();
-    expect(finalAssistant).toBeDefined();
-    expect(finalAssistant!.usage).toEqual({
+    // The turn coalesces to ONE assistant carrying both texts; the turn usage lands on it.
+    const assistants = result.messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(1);
+    const assistant = assistants[0];
+    const texts = assistant.content
+      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+      .map((b) => b.text);
+    expect(texts).toEqual(['First assistant response', 'Final assistant response']);
+    expect(assistant.usage).toEqual({
       input: 200,
       output: 80,
       cacheRead: 20,
@@ -449,7 +588,7 @@ describe('CodexJsonlParser', () => {
     expect(result.metrics.isOngoing).toBe(true);
   });
 
-  it('keeps usage on the last assistant only when a turn flushes mid-stream', async () => {
+  it('lands the turn usage on the single coalesced assistant (pre- and post-tool text merged)', async () => {
     const file = tmpFile([
       sessionMeta(),
       turnContext('o3'),
@@ -463,21 +602,15 @@ describe('CodexJsonlParser', () => {
     ]);
 
     const result = await parseCodexJsonl(file);
-    const preToolAssistant = result.messages.find(
-      (m) =>
-        m.role === 'assistant' &&
-        m.content.some((block) => block.type === 'text' && block.text.includes('Pre-tool')),
-    );
-    const postToolAssistant = result.messages.find(
-      (m) =>
-        m.role === 'assistant' &&
-        m.content.some((block) => block.type === 'text' && block.text.includes('Post-tool')),
-    );
-
-    expect(preToolAssistant).toBeDefined();
-    expect(preToolAssistant!.usage).toBeUndefined();
-    expect(postToolAssistant).toBeDefined();
-    expect(postToolAssistant!.usage).toEqual({
+    // Pre-tool and post-tool text coalesce into ONE assistant; usage attaches to it once.
+    const assistants = result.messages.filter((m) => m.role === 'assistant');
+    expect(assistants).toHaveLength(1);
+    const assistant = assistants[0];
+    const texts = assistant.content
+      .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+      .map((b) => b.text);
+    expect(texts).toEqual(['Pre-tool assistant', 'Post-tool assistant']);
+    expect(assistant.usage).toEqual({
       input: 200,
       output: 90,
       cacheRead: 60,

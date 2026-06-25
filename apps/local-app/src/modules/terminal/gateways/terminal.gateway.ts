@@ -23,7 +23,7 @@ import { createEnvelope, HeartbeatPayload, SessionStatePayload } from '../dtos/w
 import type { FrameEvent } from '../services/terminal-session/terminal-frame-stream';
 import type { TerminalSession } from '../services/terminal-session/terminal-session';
 import { SessionsService } from '../../sessions/services/sessions.service';
-import { normalizeLineEndings } from '../utils/normalize-line-endings';
+import { normalizeLineEndings, stripFinalLineEnding } from '../utils/normalize-line-endings';
 import { RealtimeBroadcastService } from '../../realtime/services/realtime-broadcast.service';
 
 const logger = createLogger('TerminalGateway');
@@ -43,6 +43,10 @@ interface ClientSession {
 
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 45000;
+
+// Coalescing window for viewport-mode-restore redraws: collapses simultaneous viewers'
+// post-seed/reconnect requests into one resize jiggle, avoiding redraw storms.
+const VIEWPORT_RESTORE_COALESCE_MS = 500;
 
 const INPUT_RATE_WINDOW_MS = 5000;
 const INPUT_RATE_MSG_THRESHOLD = 500; // >100 msg/sec sustained over 5s = 500 msgs in window
@@ -69,6 +73,8 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
   private heartbeatInterval?: NodeJS.Timeout;
   private inputRateTracker = new Map<string, InputRateEntry>();
   private readonly themeCache = new Map<string, ThemeStyle>();
+  /** Last viewport-mode-restore redraw per session — coalesces concurrent viewers. */
+  private readonly viewportRestoreAt = new Map<string, number>();
 
   constructor(
     private readonly streamService: TerminalStreamService,
@@ -191,6 +197,10 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
     client.join(`terminal:${sessionId}`);
 
     this.wireFrameListener(sessionId);
+    // Resolve the alt-screen policy onto the session so its seed advertises the correct
+    // hasHistory (alt-screen seeds → no scroll-up affordance). Set before subscribe()
+    // because subscribe() kicks off the async seed emit.
+    session.setUsesAlternateScreen(this.sessionsService.usesAlternateScreenFor(sessionId));
     session.subscribe(client.id);
 
     if (!isFirstAttach) {
@@ -198,6 +208,11 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
       for (const frame of bufferedFrames) {
         client.emit('message', frame);
       }
+      // NO-SEED / post-restart attach: there is no client-side seed window to discard a
+      // redraw, so restore alt-screen + mouse modes now — sequenced AFTER ensurePtyStreaming
+      // above so triggerRedraw isn't a no-op on a freshly-rehydrated PTY. The seeded first
+      // attach instead requests this from the client post-seed (see terminal:restore_viewport_modes).
+      this.maybeRestoreViewportModes(sessionId);
     }
   }
 
@@ -331,11 +346,15 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     const result = session.resize(client.id, { cols, rows });
-    if (result.applied) {
-      this.ptyService.resize(sessionId, cols, rows);
-      this.server
-        .to(`terminal:${sessionId}`)
-        .emit('message', createEnvelope(`terminal/${sessionId}`, 'resize', { rows, cols }));
+    if (result.ptyDimensions) {
+      this.ptyService.resize(sessionId, result.ptyDimensions.cols, result.ptyDimensions.rows);
+      this.server.to(`terminal:${sessionId}`).emit(
+        'message',
+        createEnvelope(`terminal/${sessionId}`, 'resize', {
+          rows: result.ptyDimensions.rows,
+          cols: result.ptyDimensions.cols,
+        }),
+      );
     }
   }
 
@@ -413,7 +432,7 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     const captureResult = await this.terminalIO.captureHistory(target, maxLines, true);
     let history = captureResult.ok ? captureResult.output : '';
-    if (history.endsWith('\n')) history = history.slice(0, -1);
+    history = stripFinalLineEnding(history);
 
     const { maxBytes } = this.seedService.resolveSeedingConfig();
     let hasHistory = false;
@@ -437,6 +456,26 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
         capturedSequence,
       }),
     );
+  }
+
+  /**
+   * Client-initiated, post-seed request to restore the terminal's viewport modes
+   * (alt-screen + mouse-tracking). `capture-pane -e` replays visible cells but NOT DEC
+   * private modes, and frames arriving DURING the client seed are discarded — so on a
+   * seeded (re)connect into a full-screen TUI the modes are lost until something repaints.
+   * The client fires this once its seed has settled; the server GATES it on the provider's
+   * alt-screen policy (non-alt-screen providers no-op) and coalesces the resize jiggle.
+   */
+  @SubscribeMessage('terminal:restore_viewport_modes')
+  handleRestoreViewportModes(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { sessionId: string },
+  ) {
+    const sessionId = payload?.sessionId;
+    if (!sessionId) return;
+    const cs = this.clientSessions.get(client.id);
+    if (!cs?.subscriptions.has(`terminal/${sessionId}`)) return;
+    this.maybeRestoreViewportModes(sessionId);
   }
 
   @SubscribeMessage('pong')
@@ -468,6 +507,7 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
       .emit('message', createEnvelope(`session/${payload.sessionId}`, 'state_change', ep));
     setTimeout(() => this.streamService.clearBuffer(payload.sessionId), 60000);
     this.themeCache.delete(payload.sessionId);
+    this.viewportRestoreAt.delete(payload.sessionId);
   }
 
   @OnEvent('session.started')
@@ -523,6 +563,7 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
     setTimeout(() => this.streamService.clearBuffer(payload.sessionId), 60000);
     this.seedService.invalidateCache(payload.sessionId);
     this.themeCache.delete(payload.sessionId);
+    this.viewportRestoreAt.delete(payload.sessionId);
   }
 
   // ── Heartbeat ───────────────────────────────────────────────────────
@@ -595,6 +636,7 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.unwireFrameListener(sessionId);
     this.registry.dispose(sessionId);
     this.themeCache.delete(sessionId);
+    this.viewportRestoreAt.delete(sessionId);
     const ep: SessionStatePayload = {
       sessionId,
       status: 'crashed',
@@ -614,6 +656,26 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
     const alive = await this.terminalIO.sessionExists({ name: tmuxSessionName });
     if (!alive) return;
     await this.ptyService.startStreaming(sessionId, tmuxSessionName, options);
+  }
+
+  /**
+   * Restore a TUI session's alt-screen + mouse modes via a {@link PtyService.triggerRedraw}
+   * jiggle. GATED on the provider's alt-screen policy (non-alt-screen providers no-op) and
+   * COALESCED across simultaneous viewers within {@link VIEWPORT_RESTORE_COALESCE_MS} so a
+   * burst of post-seed/reconnect requests collapses to a single redraw. triggerRedraw is
+   * itself a no-op when the PTY isn't streaming.
+   */
+  private maybeRestoreViewportModes(sessionId: string): void {
+    if (!this.sessionsService.usesAlternateScreenFor(sessionId)) return;
+    const now = Date.now();
+    const last = this.viewportRestoreAt.get(sessionId) ?? 0;
+    if (now - last < VIEWPORT_RESTORE_COALESCE_MS) {
+      logger.debug({ sessionId }, 'viewport_mode_restore_coalesced');
+      return;
+    }
+    this.viewportRestoreAt.set(sessionId, now);
+    logger.debug({ sessionId }, 'viewport_mode_restore_redraw');
+    void this.ptyService.triggerRedraw(sessionId);
   }
 
   private trackInputRate(clientId: string, sessionId: string, dataBytes: number): void {
@@ -663,5 +725,6 @@ export class TerminalGateway implements OnGatewayConnection, OnGatewayDisconnect
       this.unwireFrameListener(sessionId);
     }
     this.themeCache.clear();
+    this.viewportRestoreAt.clear();
   }
 }

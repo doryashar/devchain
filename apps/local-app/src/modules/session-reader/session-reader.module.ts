@@ -9,11 +9,13 @@ import { TranscriptPersistenceListener } from './services/transcript-persistence
 import { ClaudeSessionReaderAdapter } from './adapters/claude-session-reader.adapter';
 import { CodexSessionReaderAdapter } from './adapters/codex-session-reader.adapter';
 import { GeminiSessionReaderAdapter } from './adapters/gemini-session-reader.adapter';
+import { OpenCodeSessionReaderAdapter } from './adapters/opencode-session-reader.adapter';
 import { PRICING_SERVICE } from './services/pricing.interface';
 import { PricingService } from './services/pricing.service';
 import { SessionReaderService } from './services/session-reader.service';
 import { SessionCacheService } from './services/session-cache.service';
 import { TranscriptWatcherService } from './services/transcript-watcher.service';
+import { TranscriptWatcherRehydrator } from './services/transcript-watcher-rehydrator.service';
 import { SubagentLocator } from './services/subagent-locator.service';
 import { SubagentResolver } from './services/subagent-resolver.service';
 import { SessionReaderController } from './controllers/session-reader.controller';
@@ -29,10 +31,12 @@ import { CodexProviderSessionIdBackfillService } from './services/codex-provider
     ClaudeSessionReaderAdapter,
     CodexSessionReaderAdapter,
     GeminiSessionReaderAdapter,
+    OpenCodeSessionReaderAdapter,
     { provide: PRICING_SERVICE, useClass: PricingService },
     SessionReaderService,
     SessionCacheService,
     TranscriptWatcherService,
+    TranscriptWatcherRehydrator,
     SubagentLocator,
     SubagentResolver,
   ],
@@ -44,6 +48,7 @@ import { CodexProviderSessionIdBackfillService } from './services/codex-provider
     ClaudeSessionReaderAdapter,
     CodexSessionReaderAdapter,
     GeminiSessionReaderAdapter,
+    OpenCodeSessionReaderAdapter,
     PRICING_SERVICE,
     SessionReaderService,
     SessionCacheService,
@@ -58,11 +63,13 @@ export class SessionReaderModule implements OnModuleInit {
     private readonly claudeAdapter: ClaudeSessionReaderAdapter,
     private readonly codexAdapter: CodexSessionReaderAdapter,
     private readonly geminiAdapter: GeminiSessionReaderAdapter,
+    private readonly opencodeAdapter: OpenCodeSessionReaderAdapter,
   ) {}
 
   onModuleInit() {
     this.adapterFactory.registerAdapter(this.claudeAdapter);
     this.adapterFactory.registerAdapter(this.codexAdapter);
     this.adapterFactory.registerAdapter(this.geminiAdapter);
+    this.adapterFactory.registerAdapter(this.opencodeAdapter);
   }
 }

@@ -18,6 +18,9 @@ const PROVIDER_ROOTS: Record<string, string[]> = {
   claude: ['.claude/projects/'],
   codex: ['.codex/sessions/'],
   gemini: ['.gemini/tmp/'],
+  // OpenCode stores all sessions in a single SQLite container under this root;
+  // `transcript_path` points at the `.db` file (a real file → passes validation).
+  opencode: ['.local/share/opencode/'],
 };
 
 @Injectable()

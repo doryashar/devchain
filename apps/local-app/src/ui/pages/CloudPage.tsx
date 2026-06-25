@@ -25,14 +25,14 @@ export function CloudPage() {
     <div className="flex flex-col lg:flex-row h-full">
       <nav
         className={cn(
-          'flex flex-col shrink-0 lg:w-56',
-          'border-b lg:border-b-0 lg:border-r border-border bg-card',
+          'flex flex-col shrink-0 lg:w-72',
+          'rounded-xl border border-border bg-card shadow-sm',
         )}
         aria-label="Cloud navigation"
       >
-        <div className="flex items-center gap-2 px-4 py-3">
-          <Cloud className="h-5 w-5 text-primary" />
-          <span className="text-sm font-semibold text-foreground">Cloud</span>
+        <div className="flex items-center gap-2 px-4 py-4">
+          <Cloud className="h-6 w-6 text-primary" />
+          <span className="text-base font-bold text-foreground">Cloud</span>
         </div>
         <div className="flex flex-row lg:flex-col" role="tablist" aria-label="Cloud sections">
           {NAV_ITEMS.map(({ key, label, icon: Icon }) => {
@@ -47,11 +47,11 @@ export function CloudPage() {
                 aria-controls="cloud-tabpanel"
                 onClick={() => setActiveSection(key)}
                 className={cn(
-                  'flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-left',
+                  'relative flex items-center gap-2 px-4 py-3 text-sm font-medium text-left',
                   'transition-colors outline-none',
                   'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   isSelected
-                    ? 'bg-primary/10 text-primary lg:border-r-2 lg:border-r-primary'
+                    ? 'bg-primary/10 text-primary lg:after:absolute lg:after:right-0 lg:after:top-2 lg:after:bottom-2 lg:after:w-0.5 lg:after:rounded-full lg:after:bg-primary lg:after:pointer-events-none'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >

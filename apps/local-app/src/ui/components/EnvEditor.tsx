@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useImperativeHandle, useState } from 'react';
+import { forwardRef, useCallback, useImperativeHandle, useState, type ReactNode } from 'react';
 import { Button } from '@/ui/components/ui/button';
 import { Input } from '@/ui/components/ui/input';
 import { Plus, X } from 'lucide-react';
@@ -12,8 +12,9 @@ export const EnvEditor = forwardRef<
   {
     env: Record<string, string>;
     onChange: (env: Record<string, string>) => void;
+    renderRowExtra?: (key: string, value: string) => ReactNode;
   }
->(function EnvEditor({ env, onChange }, ref) {
+>(function EnvEditor({ env, onChange, renderRowExtra }, ref) {
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -82,6 +83,7 @@ export const EnvEditor = forwardRef<
                 className="flex-1 font-mono text-sm"
                 placeholder="Value"
               />
+              {renderRowExtra?.(key, value)}
               <Button
                 type="button"
                 variant="ghost"

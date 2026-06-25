@@ -4,6 +4,7 @@ import type {
   AddMcpServerOptions,
   McpServerEntry,
   BuildLaunchArgsInput,
+  TerminalOutputBehavior,
 } from './provider-adapter.interface';
 
 @Injectable()
@@ -11,6 +12,18 @@ export class OpencodeAdapter implements ProviderAdapter {
   readonly providerName = 'opencode';
   readonly mcpMode = 'project_config' as const;
   readonly configFileName = 'opencode.json';
+
+  // OpenCode is a full-screen TUI: keep the terminal alternate screen on and
+  // preserve its `?1049;1000h` (alt-screen + mouse-tracking) so wheel events pass
+  // through to the TUI instead of scrolling our scrollback. Every other provider
+  // leaves this unset (default false) and keeps alt-screen suppressed.
+  readonly terminalOutputBehavior: TerminalOutputBehavior = { usesAlternateScreen: true };
+
+  // TranscriptDiscoveryCapability — OpenCode is DB-backed: discovery is a
+  // structured SQL match (handled by the DB-aware path in the persistence
+  // listener), and restore needs the `ses_…` id (`--session <id>`).
+  readonly transcriptDiscoveryStrategy = 'all' as const;
+  readonly providerSessionIdRequiredForRestore = true;
 
   addMcpServer(_options: AddMcpServerOptions): string[] {
     // OpenCode MCP is managed via opencode.json config file, not CLI.

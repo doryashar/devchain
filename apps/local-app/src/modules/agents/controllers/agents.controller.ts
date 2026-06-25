@@ -19,6 +19,7 @@ import { SessionCoordinatorService } from '../../sessions/services/session-coord
 import { SessionRuntime } from '../../sessions/services/session-runtime';
 import { SessionDto } from '../../sessions/dtos/sessions.dto';
 import { EventsService } from '../../events/services/events.service';
+import { SettingsService } from '../../settings/services/settings.service';
 import { z } from 'zod';
 import { createLogger } from '../../../common/logging/logger';
 
@@ -96,6 +97,7 @@ export class AgentsController {
     private readonly sessionsService: SessionsService,
     private readonly sessionCoordinator: SessionCoordinatorService,
     private readonly sessionRuntime: SessionRuntime,
+    private readonly settingsService: SettingsService,
     @Optional() private readonly eventsService?: EventsService,
   ) {}
 
@@ -306,6 +308,15 @@ export class AgentsController {
     logger.info({ id }, 'DELETE /api/agents/:id');
     const agent = await this.storage.getAgent(id);
     await this.storage.deleteAgent(id);
+    try {
+      await this.settingsService.removeAgentFromProjectPresets(agent.projectId, agent.name);
+    } catch (error) {
+      logger.error(
+        { agentId: id, projectId: agent.projectId, agentName: agent.name, error },
+        'Failed to remove agent from project presets after deletion',
+      );
+      throw error;
+    }
     try {
       await this.eventsService?.publish('agent.deleted', {
         agentId: id,

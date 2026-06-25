@@ -6,6 +6,7 @@ import {
   type RealtimeBroadcaster,
 } from '../../realtime/ports/realtime-broadcaster.port';
 import { broadcastRegistry } from '../catalog/broadcast-registry';
+import { projectBroadcast } from '../catalog/project-broadcast';
 
 const logger = createLogger('CatalogBroadcaster');
 
@@ -21,10 +22,8 @@ export class CatalogBroadcasterService implements OnModuleInit {
       this.eventEmitter.on(eventName, (payload: Record<string, unknown>) => {
         for (const entry of entries) {
           try {
-            const topic = typeof entry.topic === 'function' ? entry.topic(payload) : entry.topic;
-            const type = typeof entry.type === 'function' ? entry.type(payload) : entry.type;
-            const projected = entry.payloadProjection ? entry.payloadProjection(payload) : payload;
-            this.broadcaster.broadcastEvent(topic, type, projected);
+            const projected = projectBroadcast(entry, payload);
+            this.broadcaster.broadcastEvent(projected.topic, projected.type, projected.payload);
           } catch (error) {
             logger.error(
               {

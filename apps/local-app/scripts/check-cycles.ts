@@ -2,7 +2,6 @@
  * Cycle detector — CI guard for module-graph health.
  *
  * Mechanism: madge --circular + classified allowlist comparison.
- * Design: docs/plans/6c-detector-design.md
  * Allowlist: docs/cycle-allowlist.md
  *
  * Exit codes:

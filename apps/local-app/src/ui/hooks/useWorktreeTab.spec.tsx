@@ -11,7 +11,7 @@ import {
   ProjectSelectionProvider,
   useSelectedProject,
 } from './useProjectSelection';
-import { getAppSocket, releaseAppSocket } from '@/ui/lib/socket';
+import { getAppSocket } from '@/ui/lib/socket';
 import { useRealtimeDispatch } from '@/ui/hooks/useRealtimeDispatch';
 
 jest.mock('@/ui/lib/socket', () => ({
@@ -24,7 +24,6 @@ jest.mock('@/ui/hooks/useRealtimeDispatch', () => ({
 }));
 
 const getAppSocketMock = getAppSocket as jest.MockedFunction<typeof getAppSocket>;
-const releaseAppSocketMock = releaseAppSocket as jest.MockedFunction<typeof releaseAppSocket>;
 const useRealtimeDispatchMock = useRealtimeDispatch as jest.MockedFunction<
   typeof useRealtimeDispatch
 >;
@@ -51,18 +50,6 @@ function createMockSocket(): MockSocket {
     }),
     _listeners: listeners,
   };
-}
-
-function simulateMessage(
-  socket: MockSocket,
-  envelope: { topic: string; type: string; payload?: unknown; ts?: string },
-) {
-  const handlers = socket._listeners.get('message');
-  if (handlers) {
-    for (const handler of handlers) {
-      handler({ ts: new Date().toISOString(), payload: {}, ...envelope });
-    }
-  }
 }
 
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));

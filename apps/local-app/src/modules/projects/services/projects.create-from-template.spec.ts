@@ -32,6 +32,7 @@ describe('ProjectsService', () => {
     getProject: jest.Mock;
     listProviders: jest.Mock;
     listProvidersByIds: jest.Mock;
+    listEnvScopesByProviderIds: jest.Mock;
     listProviderModelsByProviderIds: jest.Mock;
     bulkCreateProviderModels: jest.Mock;
     listPrompts: jest.Mock;
@@ -70,6 +71,8 @@ describe('ProjectsService', () => {
     getAgent: jest.Mock;
     getAgentProfile: jest.Mock;
     getProfileProviderConfig: jest.Mock;
+    parkSessionsFromAgents: jest.Mock;
+    applySessionPlan: jest.Mock;
   };
   let sessions: {
     listActiveSessions: jest.Mock;
@@ -121,6 +124,7 @@ describe('ProjectsService', () => {
       ),
       listProviders: jest.fn(),
       listProvidersByIds: jest.fn().mockResolvedValue([]),
+      listEnvScopesByProviderIds: jest.fn().mockReturnValue(new Map()),
       listProviderModelsByProviderIds: jest.fn().mockResolvedValue([]),
       bulkCreateProviderModels: jest.fn().mockResolvedValue({ added: [], existing: [] }),
       listPrompts: jest.fn(),
@@ -172,6 +176,8 @@ describe('ProjectsService', () => {
       getAgent: jest.fn(),
       getAgentProfile: jest.fn(),
       getProfileProviderConfig: jest.fn(),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map()),
+      applySessionPlan: jest.fn().mockResolvedValue(undefined),
     };
 
     sessions = {

@@ -107,6 +107,7 @@ describe('WorktreesService', () => {
   const originalRepoRoot = process.env.REPO_ROOT;
   const originalWorktreesRoot = process.env.WORKTREES_ROOT;
   const originalWorktreesDataRoot = process.env.WORKTREES_DATA_ROOT;
+  const originalCloudUiEnabled = process.env.DEVCHAIN_CLOUD_UI_ENABLED;
 
   let tempRoot: string;
   let repoPath: string;
@@ -129,6 +130,7 @@ describe('WorktreesService', () => {
     delete process.env.REPO_ROOT;
     delete process.env.WORKTREES_ROOT;
     delete process.env.WORKTREES_DATA_ROOT;
+    delete process.env.DEVCHAIN_CLOUD_UI_ENABLED;
     resetEnvConfig();
 
     tempRoot = await mkdtemp(join(tmpdir(), 'orchestrator-worktrees-service-'));
@@ -279,6 +281,11 @@ describe('WorktreesService', () => {
     } else {
       process.env.WORKTREES_DATA_ROOT = originalWorktreesDataRoot;
     }
+    if (originalCloudUiEnabled === undefined) {
+      delete process.env.DEVCHAIN_CLOUD_UI_ENABLED;
+    } else {
+      process.env.DEVCHAIN_CLOUD_UI_ENABLED = originalCloudUiEnabled;
+    }
     resetEnvConfig();
     global.fetch = originalFetch;
     await rm(tempRoot, { recursive: true, force: true });
@@ -338,6 +345,64 @@ describe('WorktreesService', () => {
         }),
       }),
     );
+  });
+
+  it('forwards an explicit DEVCHAIN_CLOUD_UI_ENABLED into the container worktree env', async () => {
+    process.env.DEVCHAIN_CLOUD_UI_ENABLED = '0';
+    resetEnvConfig();
+
+    docker.createContainer?.mockResolvedValue({
+      id: 'container-1',
+      name: 'devchain-wt-feature-auth',
+      image: 'devchain:latest',
+      hostPort: 41001,
+      state: 'running',
+    });
+    docker.waitForHealthy?.mockResolvedValue(true);
+
+    await service.createWorktree({
+      name: 'feature-auth',
+      branchName: 'feature/auth',
+      baseBranch: 'main',
+      templateSlug: '3-agent-dev',
+      ownerProjectId: 'project-main',
+      repoPath,
+    });
+
+    const createContainerInput = docker.createContainer?.mock.calls[0]?.[0] as {
+      env?: Record<string, string>;
+    };
+    expect(createContainerInput.env?.DEVCHAIN_CLOUD_UI_ENABLED).toBe('0');
+  });
+
+  it('omits DEVCHAIN_CLOUD_UI_ENABLED from the container worktree env when unset in the parent', async () => {
+    // beforeEach deletes the var; assert the child env is left to default ON
+    // (the key must be absent, not forwarded as undefined/empty).
+    expect(process.env.DEVCHAIN_CLOUD_UI_ENABLED).toBeUndefined();
+
+    docker.createContainer?.mockResolvedValue({
+      id: 'container-1',
+      name: 'devchain-wt-feature-auth',
+      image: 'devchain:latest',
+      hostPort: 41001,
+      state: 'running',
+    });
+    docker.waitForHealthy?.mockResolvedValue(true);
+
+    await service.createWorktree({
+      name: 'feature-auth',
+      branchName: 'feature/auth',
+      baseBranch: 'main',
+      templateSlug: '3-agent-dev',
+      ownerProjectId: 'project-main',
+      repoPath,
+    });
+
+    const createContainerInput = docker.createContainer?.mock.calls[0]?.[0] as {
+      env?: Record<string, string>;
+    };
+    expect(createContainerInput.env).toBeDefined();
+    expect(createContainerInput.env).not.toHaveProperty('DEVCHAIN_CLOUD_UI_ENABLED');
   });
 
   it('prefers owner project rootPath over provided repoPath when creating worktree', async () => {

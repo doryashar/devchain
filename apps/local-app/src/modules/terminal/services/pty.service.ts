@@ -19,6 +19,8 @@ interface PtySession {
   tmuxSessionName: string;
   ptyProcess: pty.IPty;
   needsLfNormalize: boolean;
+  /** Resolved once at startStreaming: full-screen TUI provider → skip the alt-screen strip. */
+  usesAlternateScreen: boolean;
   loggedPath?: boolean;
 }
 
@@ -46,7 +48,7 @@ export class PtyService implements OnModuleDestroy {
       const stored = this.settingsService.getSetting('terminal.engine');
       if (stored && typeof stored === 'string') engine = stored.trim().toLowerCase();
     } catch {}
-    logger.info({ engine }, 'PtyService initialized with ANSI sanitization (strip_alt)');
+    logger.info({ engine }, 'PtyService initialized (per-provider alt-screen policy)');
   }
 
   onModuleDestroy() {
@@ -89,19 +91,25 @@ export class PtyService implements OnModuleDestroy {
         env: process.env as { [key: string]: string },
       });
 
-      // Store the session
+      // Store the session. Both per-provider terminal policies are resolved ONCE here
+      // (never per-frame in the onData hot path): LF normalization, and whether this
+      // provider is a full-screen TUI that keeps the alternate screen.
+      const usesAlternateScreen = this.sessionsService.usesAlternateScreenFor(sessionId);
       this.activeSessions.set(sessionId, {
         sessionId,
         tmuxSessionName,
         ptyProcess,
         needsLfNormalize: this.sessionsService.shouldNormalizeLfFor(sessionId),
+        usesAlternateScreen,
         loggedPath: false,
       });
 
-      // NOTE: We DO NOT disable tmux alternate-screen anymore.
-      // Allowing alt-screen to work properly preserves the separation between
-      // primary buffer (command history) and alternate buffer (TUI apps).
-      // This prevents TUI apps from overwriting scrollback history.
+      // Alt-screen policy is PER-PROVIDER (set on the tmux window by the launch/restore
+      // pipeline via setAlternateScreen). For non-TUI providers (the default) we ALSO
+      // strip the `?1049/?1047/?47` DECSET toggles from the stream below so output stays
+      // on the primary buffer and accumulates scrollback. For TUI providers
+      // (usesAlternateScreen=true, e.g. OpenCode) we keep alt-screen on AND skip that
+      // strip, preserving the combined `?1049;1000h` so mouse-tracking survives.
 
       // Subscribe to FrameStream for activity detection (data frames drive busy/idle state)
       this.terminalActivity.watchSession(sessionId, Date.now() + ACTIVITY_SUPPRESSION_MS);
@@ -115,12 +123,20 @@ export class PtyService implements OnModuleDestroy {
         }
         if (!sess.loggedPath) {
           logger.info(
-            { sessionId, lfNormalize: sess.needsLfNormalize },
-            'PTY data flowing (strip_alt sanitization active)',
+            {
+              sessionId,
+              lfNormalize: sess.needsLfNormalize,
+              usesAlternateScreen: sess.usesAlternateScreen,
+            },
+            sess.usesAlternateScreen
+              ? 'PTY data flowing (alt-screen preserved — strip skipped for TUI provider)'
+              : 'PTY data flowing (alt-screen strip active)',
           );
           sess.loggedPath = true;
         }
-        let processed = stripAlternateScreenSequences(data);
+        // Skip the strip for full-screen TUI providers so the combined `?1049;1000h`
+        // (alt-screen + mouse-tracking) is preserved; strip for everyone else.
+        let processed = sess.usesAlternateScreen ? data : stripAlternateScreenSequences(data);
         if (sess.needsLfNormalize) {
           processed = normalizeLineEndings(processed);
         }

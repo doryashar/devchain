@@ -42,6 +42,33 @@ export class ActiveSessionLookup {
     return row ? this.toActiveSessionInfo(row) : null;
   }
 
+  /**
+   * Resolve a session's owning project via `session → agent → project`,
+   * regardless of session status (running OR ended) — ownership applies to
+   * historical transcripts too. Returns null when the session does not exist.
+   *
+   * Used to enforce project scoping on session-ID-centric reads (e.g. mobile
+   * chat transcript RPCs) so a caller cannot read another project's session by
+   * guessing its id.
+   */
+  async getSessionProjectScope(
+    sessionId: string,
+  ): Promise<{ sessionId: string; agentId: string | null; projectId: string } | null> {
+    const row = this.sqlite
+      .prepare(
+        `
+        SELECT s.id, s.agent_id, a.project_id
+        FROM sessions s
+        JOIN agents a ON s.agent_id = a.id
+        WHERE s.id = ?
+        LIMIT 1
+      `,
+      )
+      .get(sessionId) as { id: string; agent_id: string | null; project_id: string } | undefined;
+
+    return row ? { sessionId: row.id, agentId: row.agent_id, projectId: row.project_id } : null;
+  }
+
   async listActiveSessions(projectId: string): Promise<ActiveSessionInfo[]> {
     const rows = this.sqlite
       .prepare(

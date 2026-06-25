@@ -152,9 +152,16 @@ export const ChatTerminal = forwardRef<ChatTerminalHandle, ChatTerminalProps>(fu
       setIsTerminalReady(true);
       // Auto-focus terminal after seed is ready
       xtermRef.current?.focus?.();
+      // Post-seed viewport-mode restore: the seed (capture-pane) replays cells but NOT DEC
+      // private modes, and any redraw emitted DURING seed was discarded. Now that the seed
+      // has settled (frames hit the normal write path), ask the server to re-emit alt-screen
+      // + mouse modes. Server-gated on the provider's alt-screen policy → no-op for non-TUI
+      // providers. Confined to the seed-ready hook; the wheel-forward gate is untouched.
+      if (socket.connected) {
+        socket.emit('terminal:restore_viewport_modes', { sessionId });
+      }
     },
     scrollbackLines,
-    socket,
   );
 
   // Resize handling - pass expectingSeedRef to skip resize events during seed loading

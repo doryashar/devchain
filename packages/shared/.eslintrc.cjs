@@ -1,8 +1,11 @@
 module.exports = {
   parser: '@typescript-eslint/parser',
   parserOptions: {
-    project: 'tsconfig.json',
-    tsconfigRootDir: __dirname,
+    // No `project`/typed-linting on purpose: none of the enabled rules are
+    // type-aware, and pointing at tsconfig.json (which excludes specs/.d.ts)
+    // makes ESLint throw "TSConfig does not include this file" on every
+    // src/**/*.spec.ts the lint glob picks up. If type-aware rules are added
+    // later, introduce a lint-specific tsconfig that includes the linted files.
     sourceType: 'module',
   },
   plugins: ['@typescript-eslint/eslint-plugin'],
@@ -14,7 +17,7 @@ module.exports = {
   env: {
     node: true,
   },
-  ignorePatterns: ['.eslintrc.js', 'dist', 'node_modules'],
+  ignorePatterns: ['.eslintrc.cjs', 'dist', 'node_modules'],
   rules: {
     '@typescript-eslint/interface-name-prefix': 'off',
     '@typescript-eslint/explicit-function-return-type': 'off',

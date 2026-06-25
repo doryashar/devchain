@@ -1,11 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ValidationError, NotFoundError, ConflictError } from '../../../common/errors/error-types';
+import {
+  ValidationError,
+  NotFoundError,
+  ConflictError,
+  ForbiddenError,
+} from '../../../common/errors/error-types';
 import { STORAGE_SERVICE } from '../../storage/interfaces/storage.interface';
 import type { Agent, AgentProfile, Team, TeamMember } from '../../storage/models/domain.models';
 import { TeamsStore } from '../storage/teams.store';
 import { TeamsService } from './teams.service';
 import { EventsService } from '../../events/services/events.service';
 import { SessionsService } from '../../sessions/services/sessions.service';
+import { SettingsService } from '../../settings/services/settings.service';
 
 const PROJECT_ID = 'project-1';
 const AGENT_A = 'agent-a';
@@ -96,6 +102,9 @@ describe('TeamsService', () => {
     listActiveSessions: jest.Mock;
     terminateSession: jest.Mock;
   };
+  let settingsService: {
+    removeAgentFromProjectPresets: jest.Mock;
+  };
 
   beforeEach(async () => {
     teamsStore = {
@@ -109,6 +118,7 @@ describe('TeamsService', () => {
       getTeamLeadTeams: jest.fn(),
       listConfigsForTeam: jest.fn(),
       listProfilesForTeam: jest.fn(),
+      listProfilesNotLinkedToAnyTeam: jest.fn(),
       createTeamAgentAtomicCapped: jest.fn(),
     } as unknown as jest.Mocked<TeamsStore>;
 
@@ -158,6 +168,10 @@ describe('TeamsService', () => {
       terminateSession: jest.fn().mockResolvedValue(undefined),
     };
 
+    settingsService = {
+      removeAgentFromProjectPresets: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TeamsService,
@@ -165,6 +179,7 @@ describe('TeamsService', () => {
         { provide: STORAGE_SERVICE, useValue: storageService },
         { provide: EventsService, useValue: eventsService },
         { provide: SessionsService, useValue: sessionsService },
+        { provide: SettingsService, useValue: settingsService },
       ],
     }).compile();
 
@@ -1887,7 +1902,7 @@ describe('TeamsService', () => {
       teamsStore.listTeamsByAgent.mockResolvedValue([team1]);
     }
 
-    it('deletes a non-lead team member successfully', async () => {
+    it('deletes a non-lead team member successfully and cleans up presets', async () => {
       setupHappyPath();
 
       const result = await service.deleteTeamAgent({
@@ -1904,6 +1919,10 @@ describe('TeamsService', () => {
         },
       });
       expect(storageService.deleteAgent).toHaveBeenCalledWith(AGENT_B);
+      expect(settingsService.removeAgentFromProjectPresets).toHaveBeenCalledWith(
+        PROJECT_ID,
+        `Agent-${AGENT_B}`,
+      );
     });
 
     it('publishes both team.member.removed and agent.deleted events', async () => {
@@ -2180,6 +2199,362 @@ describe('TeamsService', () => {
       });
 
       expect(result).toHaveProperty('result');
+    });
+
+    it('does not call preset cleanup when storage.deleteAgent rejects (ConflictError)', async () => {
+      setupHappyPath();
+      storageService.deleteAgent.mockRejectedValue(
+        new ConflictError('Cannot delete agent: 1 active session(s)'),
+      );
+
+      await service.deleteTeamAgent({
+        leadAgentId: AGENT_A,
+        projectId: PROJECT_ID,
+        name: `Agent-${AGENT_B}`,
+      });
+
+      expect(settingsService.removeAgentFromProjectPresets).not.toHaveBeenCalled();
+    });
+
+    it('does not call preset cleanup when storage.deleteAgent throws unexpected error', async () => {
+      setupHappyPath();
+      storageService.deleteAgent.mockRejectedValue(new Error('Unexpected DB failure'));
+
+      await expect(
+        service.deleteTeamAgent({
+          leadAgentId: AGENT_A,
+          projectId: PROJECT_ID,
+          name: `Agent-${AGENT_B}`,
+        }),
+      ).rejects.toThrow('Unexpected DB failure');
+
+      expect(settingsService.removeAgentFromProjectPresets).not.toHaveBeenCalled();
+    });
+
+    it('rethrows cleanup failure and does not publish events', async () => {
+      setupHappyPath();
+      settingsService.removeAgentFromProjectPresets.mockRejectedValue(
+        new Error('settings cleanup failed'),
+      );
+
+      await expect(
+        service.deleteTeamAgent({
+          leadAgentId: AGENT_A,
+          projectId: PROJECT_ID,
+          name: `Agent-${AGENT_B}`,
+        }),
+      ).rejects.toThrow('settings cleanup failed');
+
+      expect(eventsService.publish).not.toHaveBeenCalled();
+    });
+
+    it('preset cleanup is called after storage.deleteAgent, not before', async () => {
+      setupHappyPath();
+      const callOrder: string[] = [];
+      storageService.deleteAgent.mockImplementation(async () => {
+        callOrder.push('deleteAgent');
+      });
+      settingsService.removeAgentFromProjectPresets.mockImplementation(async () => {
+        callOrder.push('removeAgentFromProjectPresets');
+      });
+
+      await service.deleteTeamAgent({
+        leadAgentId: AGENT_A,
+        projectId: PROJECT_ID,
+        name: `Agent-${AGENT_B}`,
+      });
+
+      expect(callOrder).toEqual(['deleteAgent', 'removeAgentFromProjectPresets']);
+    });
+  });
+
+  // Module-boundary facades for the cloud-tunnel chat.listProfiles RPC (MobileAddAgent T1).
+  describe('listLinkedProfileIdsForTeam', () => {
+    it("returns the team's linked profile ids when the team belongs to the project", async () => {
+      teamsStore.getTeam.mockResolvedValue(makeTeamWithMembers());
+      teamsStore.listProfilesForTeam.mockResolvedValue([PROFILE_A, PROFILE_B]);
+
+      const result = await service.listLinkedProfileIdsForTeam(PROJECT_ID, 'team-1');
+
+      expect(result).toEqual([PROFILE_A, PROFILE_B]);
+      expect(teamsStore.listProfilesForTeam).toHaveBeenCalledWith('team-1');
+    });
+
+    it('throws NotFoundError for an unknown team', async () => {
+      teamsStore.getTeam.mockResolvedValue(null);
+
+      await expect(
+        service.listLinkedProfileIdsForTeam(PROJECT_ID, 'team-x'),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      expect(teamsStore.listProfilesForTeam).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cross-project team (TEAM_PROJECT_MISMATCH) before reading profiles', async () => {
+      teamsStore.getTeam.mockResolvedValue(makeTeamWithMembers({ projectId: 'other-project' }));
+
+      await expect(service.listLinkedProfileIdsForTeam(PROJECT_ID, 'team-1')).rejects.toMatchObject(
+        { details: { code: 'TEAM_PROJECT_MISMATCH' } },
+      );
+      await expect(
+        service.listLinkedProfileIdsForTeam(PROJECT_ID, 'team-1'),
+      ).rejects.toBeInstanceOf(ForbiddenError);
+      expect(teamsStore.listProfilesForTeam).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listUnlinkedProfileIds', () => {
+    it('delegates to the store, scoped to the project', async () => {
+      teamsStore.listProfilesNotLinkedToAnyTeam.mockResolvedValue([PROFILE_A]);
+
+      const result = await service.listUnlinkedProfileIds(PROJECT_ID);
+
+      expect(result).toEqual([PROFILE_A]);
+      expect(teamsStore.listProfilesNotLinkedToAnyTeam).toHaveBeenCalledWith(PROJECT_ID);
+    });
+  });
+
+  // ---- T2: chat.* agent create/delete facades ----
+
+  describe('createTeamAgentForChat', () => {
+    const input = {
+      projectId: PROJECT_ID,
+      teamId: 'team-1',
+      name: 'New Member',
+      providerConfigId: 'config-1',
+    };
+
+    it('rejects an unknown team with NotFoundError', async () => {
+      teamsStore.getTeam.mockResolvedValue(null);
+
+      await expect(service.createTeamAgentForChat(input)).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('rejects a cross-project team (TEAM_PROJECT_MISMATCH) before delegating', async () => {
+      teamsStore.getTeam.mockResolvedValue(makeTeamWithMembers({ projectId: 'other-project' }));
+      const spy = jest.spyOn(service, 'createTeamAgentForRest');
+
+      await expect(service.createTeamAgentForChat(input)).rejects.toMatchObject({
+        details: { code: 'TEAM_PROJECT_MISMATCH' },
+      });
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('rejects a lead-less team', async () => {
+      teamsStore.getTeam.mockResolvedValue(makeTeamWithMembers({ teamLeadAgentId: null }));
+
+      await expect(service.createTeamAgentForChat(input)).rejects.toThrow('Team has no lead');
+    });
+
+    it('delegates to createTeamAgentForRest with the team lead as the actor (DEC-2: no allow-gate)', async () => {
+      teamsStore.getTeam.mockResolvedValue(makeTeamWithMembers({ teamLeadAgentId: AGENT_A }));
+      const created = makeAgent('created');
+      const spy = jest.spyOn(service, 'createTeamAgentForRest').mockResolvedValue(created);
+
+      const result = await service.createTeamAgentForChat(input);
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorLeadAgentId: AGENT_A,
+          projectId: PROJECT_ID,
+          teamId: 'team-1',
+          providerConfigId: 'config-1',
+          name: 'New Member',
+        }),
+      );
+      expect(result).toBe(created);
+    });
+  });
+
+  describe('createIndependentAgentForChat', () => {
+    const baseInput = {
+      projectId: PROJECT_ID,
+      name: 'Solo Agent',
+      profileId: PROFILE_A,
+      providerConfigId: 'config-1',
+    };
+
+    beforeEach(() => {
+      storageService.createAgent.mockResolvedValue(makeAgent('new-id'));
+    });
+
+    it('creates a standalone agent (teamId-less) and publishes agent.created with actor:null', async () => {
+      const result = await service.createIndependentAgentForChat(baseInput);
+
+      expect(storageService.createAgent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: PROJECT_ID,
+          profileId: PROFILE_A,
+          providerConfigId: 'config-1',
+          name: 'Solo Agent',
+        }),
+      );
+      expect(eventsService.publish).toHaveBeenCalledWith(
+        'agent.created',
+        expect.objectContaining({ agentId: 'new-id', actor: null }),
+      );
+      expect(result.id).toBe('new-id');
+    });
+
+    it('rejects CONFIG_NOT_FOUND when the provider config does not exist', async () => {
+      storageService.getProfileProviderConfig.mockRejectedValue(
+        new NotFoundError('ProviderConfig', 'config-1'),
+      );
+
+      await expect(service.createIndependentAgentForChat(baseInput)).rejects.toMatchObject({
+        details: { code: 'CONFIG_NOT_FOUND' },
+      });
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+
+    it('rejects CONFIG_PROFILE_MISMATCH when the config belongs to another profile', async () => {
+      storageService.getProfileProviderConfig.mockResolvedValue({
+        id: 'config-1',
+        profileId: 'some-other-profile',
+        name: 'config',
+      });
+
+      await expect(service.createIndependentAgentForChat(baseInput)).rejects.toMatchObject({
+        details: { code: 'CONFIG_PROFILE_MISMATCH' },
+      });
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+
+    it('cross-project config: rejects without leaking the foreign profile id, and creates nothing', async () => {
+      // profileId (PROFILE_A) is in-project; the config belongs to ANOTHER profile.
+      const FOREIGN_PROFILE = 'foreign-project-profile';
+      storageService.getProfileProviderConfig.mockResolvedValue({
+        id: 'config-1',
+        profileId: FOREIGN_PROFILE,
+        name: 'config',
+      });
+
+      let caught: unknown;
+      try {
+        await service.createIndependentAgentForChat(baseInput);
+      } catch (e) {
+        caught = e;
+      }
+      const details = ((caught as { details?: Record<string, unknown> })?.details ?? {}) as Record<
+        string,
+        unknown
+      >;
+      expect(details.code).toBe('CONFIG_PROFILE_MISMATCH');
+      // The config's owning profile id must NOT be exposed to the client.
+      expect(details).not.toHaveProperty('configProfileId');
+      expect(JSON.stringify(details)).not.toContain(FOREIGN_PROFILE);
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+
+    it('does not swallow a generic storage failure as CONFIG_NOT_FOUND', async () => {
+      storageService.getProfileProviderConfig.mockRejectedValue(new Error('db exploded'));
+      await expect(service.createIndependentAgentForChat(baseInput)).rejects.toThrow('db exploded');
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+
+    it('rejects a cross-project profile (PROFILE_PROJECT_MISMATCH)', async () => {
+      storageService.getProfileProviderConfig.mockResolvedValue({
+        id: 'config-1',
+        profileId: PROFILE_OTHER_PROJECT,
+        name: 'config',
+      });
+
+      await expect(
+        service.createIndependentAgentForChat({ ...baseInput, profileId: PROFILE_OTHER_PROJECT }),
+      ).rejects.toMatchObject({ details: { code: 'PROFILE_PROJECT_MISMATCH' } });
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+
+    it('rejects a duplicate name (case-insensitive, per-project) — NEW guard vs REST POST /api/agents', async () => {
+      // Default listAgents includes makeAgent(AGENT_A) named "Agent-agent-a".
+      await expect(
+        service.createIndependentAgentForChat({ ...baseInput, name: '  AGENT-Agent-A  ' }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      expect(storageService.createAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteAgentForChat', () => {
+    beforeEach(() => {
+      teamsStore.getTeamLeadTeams.mockResolvedValue([]);
+      teamsStore.listTeamsByAgent.mockResolvedValue([]);
+    });
+
+    it('rejects AGENT_IS_TEAM_LEAD if the agent leads ANY team in the project; no deletion', async () => {
+      teamsStore.getTeamLeadTeams.mockResolvedValue([
+        makeTeam({ id: 'team-9', name: 'Led Team', teamLeadAgentId: AGENT_B }),
+      ]);
+
+      await expect(
+        service.deleteAgentForChat({ projectId: PROJECT_ID, agentId: AGENT_B }),
+      ).rejects.toMatchObject({ details: { code: 'AGENT_IS_TEAM_LEAD' } });
+      expect(storageService.deleteAgent).not.toHaveBeenCalled();
+    });
+
+    it('deletes a standalone agent: best-effort preset cleanup + agent.deleted (no team.member.removed)', async () => {
+      await service.deleteAgentForChat({ projectId: PROJECT_ID, agentId: AGENT_B });
+
+      expect(storageService.deleteAgent).toHaveBeenCalledWith(AGENT_B);
+      expect(settingsService.removeAgentFromProjectPresets).toHaveBeenCalledWith(
+        PROJECT_ID,
+        'Agent-agent-b',
+      );
+      expect(eventsService.publish).toHaveBeenCalledWith(
+        'agent.deleted',
+        expect.objectContaining({ agentId: AGENT_B, teamId: null, teamName: null, actor: null }),
+      );
+      expect(eventsService.publish).not.toHaveBeenCalledWith(
+        'team.member.removed',
+        expect.anything(),
+      );
+    });
+
+    it('publishes team.member.removed with pre-delete metadata for each member team', async () => {
+      teamsStore.listTeamsByAgent.mockResolvedValue([
+        makeTeam({ id: 'team-3', name: 'Squad', teamLeadAgentId: AGENT_A }),
+      ]);
+
+      await service.deleteAgentForChat({ projectId: PROJECT_ID, agentId: AGENT_B });
+
+      expect(eventsService.publish).toHaveBeenCalledWith(
+        'team.member.removed',
+        expect.objectContaining({
+          teamId: 'team-3',
+          teamName: 'Squad',
+          teamLeadAgentId: AGENT_A,
+          removedAgentId: AGENT_B,
+          removedAgentName: 'Agent-agent-b',
+        }),
+      );
+      expect(eventsService.publish).toHaveBeenCalledWith(
+        'agent.deleted',
+        expect.objectContaining({ teamId: 'team-3', teamName: 'Squad' }),
+      );
+    });
+
+    it('surfaces AGENT_HAS_RUNNING_SESSIONS (with count) and does NOT delete or publish (DEC-3: no auto-terminate)', async () => {
+      storageService.deleteAgent.mockRejectedValue(
+        new ConflictError(
+          'Cannot delete agent: 3 active session(s) are still running. Please terminate the active sessions first.',
+        ),
+      );
+
+      await expect(
+        service.deleteAgentForChat({ projectId: PROJECT_ID, agentId: AGENT_B }),
+      ).rejects.toMatchObject({
+        details: { code: 'AGENT_HAS_RUNNING_SESSIONS', runningSessions: 3 },
+      });
+      expect(settingsService.removeAgentFromProjectPresets).not.toHaveBeenCalled();
+      expect(eventsService.publish).not.toHaveBeenCalled();
+    });
+
+    it('treats preset cleanup as best-effort: a failure does not block the delete or events', async () => {
+      settingsService.removeAgentFromProjectPresets.mockRejectedValue(new Error('preset boom'));
+
+      await expect(
+        service.deleteAgentForChat({ projectId: PROJECT_ID, agentId: AGENT_B }),
+      ).resolves.toBeUndefined();
+      expect(storageService.deleteAgent).toHaveBeenCalledWith(AGENT_B);
+      expect(eventsService.publish).toHaveBeenCalledWith('agent.deleted', expect.anything());
     });
   });
 });

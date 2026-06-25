@@ -20,6 +20,10 @@ export interface PooledMessage {
 export interface EnqueueOptions {
   source?: string;
   submitKeys?: string[];
+  /** Keys sent before the paste (e.g. `['Escape']`). Honored on the immediate path only. */
+  preKeys?: string[];
+  /** Delay (ms) after `preKeys`, before the paste. Ignored without `preKeys`. */
+  preDelayMs?: number;
   senderAgentId?: string;
   immediate?: boolean;
   projectId?: string;

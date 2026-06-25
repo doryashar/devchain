@@ -2,6 +2,12 @@ import { Injectable, Inject } from '@nestjs/common';
 import { z } from 'zod';
 import { STORAGE_SERVICE } from '../../storage/interfaces/storage.interface';
 import { createLogger } from '../../../common/logging/logger';
+import { MobileChatRpcService } from './mobile-chat-rpc.service';
+import { MobileBoardRpcService } from './mobile-board-rpc.service';
+import { ViewportStreamerService } from './viewport-streamer.service';
+import { E2eeTrustService } from '../../e2ee/services/e2ee-trust.service';
+import { toJsonRpcError } from './jsonrpc-error.util';
+import { toEpicDto, toStatusDto, toStatusMap } from './epic-dto.util';
 
 const logger = createLogger('TunnelHandler');
 
@@ -59,14 +65,177 @@ const METHOD_SCHEMAS: Record<string, z.ZodTypeAny> = {
     })
     .passthrough(),
   'board.getEpicDetail': z.object({ epicId: z.string().uuid() }).passthrough(),
+  // Board mutations + comments (tunnel schemas are STRICTER than REST):
+  'board.updateEpicAssignment': z
+    .object({
+      projectId: z.string().uuid(),
+      epicId: z.string().uuid(),
+      agentId: z.string().uuid().nullable(),
+      version: z.number().int().nonnegative(),
+    })
+    .passthrough(),
+  'board.listEpicComments': z
+    .object({
+      projectId: z.string().uuid(),
+      epicId: z.string().uuid(),
+      limit: z.number().int().min(1).max(100).optional(),
+      offset: z.number().int().min(0).optional(),
+    })
+    .passthrough(),
+  'board.addEpicComment': z
+    .object({
+      projectId: z.string().uuid(),
+      epicId: z.string().uuid(),
+      authorName: z.string().trim().min(1),
+      content: z.string().trim().min(1),
+    })
+    .passthrough(),
+  'board.deleteEpicComment': z
+    .object({
+      projectId: z.string().uuid(),
+      epicId: z.string().uuid(),
+      commentId: z.string().uuid(),
+    })
+    .passthrough(),
+  'chat.listAgents': z.object({ projectId: z.string().uuid() }).passthrough(),
+  'chat.listTeams': z.object({ projectId: z.string().uuid() }).passthrough(),
+  // teamId omitted/null → the "standalone" (unlinked) profile set; a uuid → that team's
+  // linked profiles (the handler asserts the team belongs to the project).
+  'chat.listProfiles': z
+    .object({ projectId: z.string().uuid(), teamId: z.string().uuid().nullish() })
+    .passthrough(),
+  'chat.listProfileConfigs': z
+    .object({ projectId: z.string().uuid(), profileId: z.string().uuid() })
+    .passthrough(),
+  'chat.createTeamAgent': z
+    .object({
+      projectId: z.string().uuid(),
+      teamId: z.string().uuid(),
+      name: z.string().trim().min(1),
+      providerConfigId: z.string().uuid(),
+      description: z.string().optional(),
+    })
+    .passthrough(),
+  'chat.createIndependentAgent': z
+    .object({
+      projectId: z.string().uuid(),
+      name: z.string().trim().min(1),
+      profileId: z.string().uuid(),
+      providerConfigId: z.string().uuid(),
+      description: z.string().optional(),
+    })
+    .passthrough(),
+  'chat.deleteAgent': z
+    .object({ projectId: z.string().uuid(), agentId: z.string().uuid() })
+    .passthrough(),
+  'chat.getTranscriptSummary': z
+    .object({ sessionId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.getTranscriptChunks': z
+    .object({
+      sessionId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      cursor: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      direction: z.enum(['forward', 'backward']).optional(),
+    })
+    .passthrough(),
+  'chat.getTranscriptTail': z
+    .object({
+      sessionId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      since: z.string().min(1),
+    })
+    .passthrough(),
+  'chat.sendMessage': z
+    .object({
+      agentId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      text: z.string().trim().min(1),
+    })
+    .passthrough(),
+  'chat.launchAgent': z
+    .object({ agentId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.restartAgent': z
+    .object({ agentId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.restoreSession': z
+    .object({ sessionId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.terminateSession': z
+    .object({ sessionId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.getOperationStatus': z
+    .object({ operationId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.getAgentStatus': z
+    .object({ agentId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.listPendingAskQuestions': z
+    .object({ sessionId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.listSessions': z
+    .object({
+      agentId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      cursor: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    })
+    .passthrough(),
+  'chat.deleteSessionRecord': z
+    .object({ sessionId: z.string().uuid(), projectId: z.string().uuid() })
+    .passthrough(),
+  'chat.renameSession': z
+    .object({
+      sessionId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      // nullable (NOT optional): null/empty clears the name; max enforced here too.
+      name: z.string().trim().max(120).nullable(),
+    })
+    .passthrough(),
+  // Live viewport lease control. `cols`/`rows` are advisory (forward-compat); v1 has no
+  // mobile resize (single shared pane). The screen frames ride the separate `viewport`
+  // tunnel lane, not this RPC channel.
+  'terminal.viewport.subscribe': z
+    .object({
+      sessionId: z.string().uuid(),
+      projectId: z.string().uuid(),
+      cols: z.number().int().positive().optional(),
+      rows: z.number().int().positive().optional(),
+    })
+    .passthrough(),
+  'terminal.viewport.unsubscribe': z.object({ subscriptionId: z.string().min(1) }).passthrough(),
+  // E2EE bootstrap (RE2E1): the mobile delivers its X25519 public key + kid. The service
+  // derives-and-verifies the kid + validates the key length, so the schema only asserts
+  // both fields are present non-empty strings.
+  'e2ee.adoptDeviceKey': z
+    .object({ kid: z.string().min(1), publicKeyB64: z.string().min(1) })
+    .passthrough(),
 };
 
 @Injectable()
 export class TunnelHandlerService {
   private readonly handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>>;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(@Inject(STORAGE_SERVICE) private readonly storage: any) {
+  constructor(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    @Inject(STORAGE_SERVICE) private readonly storage: any,
+    // Composition point for mobile chat.* RPCs. board.* reads stay on storage;
+    // chat.* methods (Tasks 2–5) and board.* mutations delegate to their seam
+    // services (mobileChat.<method>(p) / mobileBoard.<method>(p)).
+    private readonly mobileChat: MobileChatRpcService,
+    // Board mutations + comments go through EpicsService (events/invariants),
+    // never raw storage; see MobileBoardRpcService.
+    private readonly mobileBoard: MobileBoardRpcService,
+    // Live viewport lease control (terminal.viewport.subscribe/unsubscribe). The streamer
+    // owns subscription lifecycle + source-side auth and emits `type:'viewport'` frames.
+    private readonly viewportStreamer: ViewportStreamerService,
+    // E2EE bootstrap (RE2E1): TOFU-adopt the mobile device's relayed public key so the PC
+    // can decrypt that device's RPC. Delivered plaintext (public key only); the adopt
+    // derives-and-verifies the kid before storing (no unverified ingestion).
+    private readonly e2eeTrust: E2eeTrustService,
+  ) {
     this.handlers = {
       'board.listProjects': (p) => this.listProjects(p),
       'board.listStatuses': (p) => this.listStatuses(p),
@@ -75,6 +244,45 @@ export class TunnelHandlerService {
       'board.listEpicsByStatus': (p) => this.listEpicsByStatus(p),
       'board.listParentEpicsByStatus': (p) => this.listParentEpicsByStatus(p),
       'board.getEpicDetail': (p) => this.getEpicDetail(p),
+      'board.updateEpicAssignment': (p) => this.mobileBoard.updateEpicAssignment(p),
+      'board.listEpicComments': (p) => this.mobileBoard.listEpicComments(p),
+      'board.addEpicComment': (p) => this.mobileBoard.addEpicComment(p),
+      'board.deleteEpicComment': (p) => this.mobileBoard.deleteEpicComment(p),
+      // chat.* handlers delegate to this.mobileChat (the seam composes the
+      // narrow session/storage facades; see MobileChatRpcService):
+      'chat.listAgents': (p) => this.mobileChat.listAgents(p),
+      'chat.listTeams': (p) => this.mobileChat.listTeams(p),
+      'chat.listProfiles': (p) => this.mobileChat.listProfiles(p),
+      'chat.listProfileConfigs': (p) => this.mobileChat.listProfileConfigs(p),
+      'chat.createTeamAgent': (p) => this.mobileChat.createTeamAgent(p),
+      'chat.createIndependentAgent': (p) => this.mobileChat.createIndependentAgent(p),
+      'chat.deleteAgent': (p) => this.mobileChat.deleteAgent(p),
+      'chat.getTranscriptSummary': (p) => this.mobileChat.getTranscriptSummary(p),
+      'chat.getTranscriptChunks': (p) => this.mobileChat.getTranscriptChunks(p),
+      'chat.getTranscriptTail': (p) => this.mobileChat.getTranscriptTail(p),
+      'chat.sendMessage': (p) => this.mobileChat.sendMessage(p),
+      'chat.launchAgent': (p) => this.mobileChat.launchAgent(p),
+      'chat.restartAgent': (p) => this.mobileChat.restartAgent(p),
+      'chat.restoreSession': (p) => this.mobileChat.restoreSession(p),
+      'chat.terminateSession': (p) => this.mobileChat.terminateSession(p),
+      'chat.getOperationStatus': (p) => this.mobileChat.getOperationStatus(p),
+      'chat.getAgentStatus': (p) => this.mobileChat.getAgentStatus(p),
+      'chat.listPendingAskQuestions': (p) => this.mobileChat.listPendingAskQuestions(p),
+      'chat.listSessions': (p) => this.mobileChat.listSessions(p),
+      'chat.deleteSessionRecord': (p) => this.mobileChat.deleteSessionRecord(p),
+      'chat.renameSession': (p) => this.mobileChat.renameSession(p),
+      // Live viewport lease control:
+      'terminal.viewport.subscribe': (p) => this.viewportStreamer.subscribe(p),
+      'terminal.viewport.unsubscribe': (p) => Promise.resolve(this.viewportStreamer.unsubscribe(p)),
+      // E2EE bootstrap (RE2E1): adopt the mobile device's public key (email-login half of
+      // the bidirectional exchange). Plaintext by design — see RPC_BOOTSTRAP_METHODS.
+      'e2ee.adoptDeviceKey': (p) =>
+        Promise.resolve(
+          this.e2eeTrust.adoptPeerKeyTofu({
+            kid: p['kid'] as string,
+            publicKeyB64: p['publicKeyB64'] as string,
+          }),
+        ),
     };
   }
 
@@ -106,11 +314,7 @@ export class TunnelHandlerService {
       return { jsonrpc: '2.0', id: req.id, result };
     } catch (err) {
       logger.error({ err, method: req.method, id: req.id }, 'RPC handler error');
-      return {
-        jsonrpc: '2.0',
-        id: req.id,
-        error: { code: -32603, message: err instanceof Error ? err.message : 'Internal error' },
-      };
+      return { jsonrpc: '2.0', id: req.id, error: toJsonRpcError(err) };
     }
   }
 
@@ -135,7 +339,7 @@ export class TunnelHandlerService {
           limit: 1,
           offset: 0,
         });
-        const statusDto = this.toStatusDto(status);
+        const statusDto = toStatusDto(status);
         return {
           status: statusDto,
           epicCount: this.totalOf(parentEpics),
@@ -219,8 +423,8 @@ export class TunnelHandlerService {
     const parentIds = parentItems
       .map((item) => item.id)
       .filter((id): id is string => typeof id === 'string');
-    const statusMap = this.toStatusMap(statusesResult);
-    const statuses = this.itemsOf(statusesResult).map((status) => this.toStatusDto(status));
+    const statusMap = toStatusMap(this.itemsOf(statusesResult));
+    const statuses = this.itemsOf(statusesResult).map((status) => toStatusDto(status));
     const agentNameById = this.toAgentNameMap(agentsResult);
 
     const subEpicsByParent =
@@ -246,7 +450,7 @@ export class TunnelHandlerService {
         : { childCount: 0, childStatusCounts: [] };
 
       return {
-        ...this.toEpicDto(parent, statusMap, agentNameById),
+        ...toEpicDto(parent, statusMap, agentNameById),
         childCount: childSummary?.childCount ?? 0,
         childStatusCounts: childSummary?.childStatusCounts ?? [],
       };
@@ -272,10 +476,10 @@ export class TunnelHandlerService {
       this.storage.listStatuses(projectId, { limit: 1000, offset: 0 }),
       this.storage.listAgents(projectId, { limit: 1000, offset: 0 }),
     ]);
-    const statusMap = this.toStatusMap(statusesResult);
+    const statusMap = toStatusMap(this.itemsOf(statusesResult));
     const agentNameById = this.toAgentNameMap(agentsResult);
 
-    return this.itemsOf(result).map((epic) => this.toEpicDto(epic, statusMap, agentNameById));
+    return this.itemsOf(result).map((epic) => toEpicDto(epic, statusMap, agentNameById));
   }
 
   private async listParentChildren(params: Record<string, unknown>): Promise<unknown> {
@@ -296,7 +500,7 @@ export class TunnelHandlerService {
       this.storage.listAgents(projectId, { limit: 1000, offset: 0 }),
       this.storage.countSubEpicsByStatus(parentId),
     ]);
-    const statusMap = this.toStatusMap(statusesResult);
+    const statusMap = toStatusMap(this.itemsOf(statusesResult));
     const agentNameById = this.toAgentNameMap(agentsResult);
     const childStatusCounts = Object.entries(
       (rawChildStatusCounts as Record<string, unknown> | null | undefined) ?? {},
@@ -324,9 +528,7 @@ export class TunnelHandlerService {
       });
 
     return {
-      items: this.itemsOf(childrenResult).map((epic) =>
-        this.toEpicDto(epic, statusMap, agentNameById),
-      ),
+      items: this.itemsOf(childrenResult).map((epic) => toEpicDto(epic, statusMap, agentNameById)),
       total: this.totalOf(childrenResult),
       limit: this.limitOf(childrenResult, limit),
       offset: this.offsetOf(childrenResult, offset),
@@ -345,26 +547,9 @@ export class TunnelHandlerService {
       this.storage.listStatuses(projectId, { limit: 1000, offset: 0 }),
       this.storage.listAgents(projectId, { limit: 1000, offset: 0 }),
     ]);
-    const statusMap = this.toStatusMap(statusesResult);
+    const statusMap = toStatusMap(this.itemsOf(statusesResult));
     const agentNameById = this.toAgentNameMap(agentsResult);
-    return this.toEpicDto(epic, statusMap, agentNameById);
-  }
-
-  private toStatusDto(status: Record<string, unknown>): Record<string, unknown> {
-    return {
-      id: status.id,
-      name: status.name ?? status.label,
-      color: status.color,
-      position: status.position,
-    };
-  }
-
-  private toStatusMap(result: unknown): Map<string, Record<string, unknown>> {
-    return new Map(
-      this.itemsOf(result)
-        .filter((status) => typeof status.id === 'string')
-        .map((status) => [status.id as string, this.toStatusDto(status)]),
-    );
+    return toEpicDto(epic, statusMap, agentNameById);
   }
 
   private toAgentNameMap(result: unknown): Map<string, string> {
@@ -393,35 +578,6 @@ export class TunnelHandlerService {
     }
 
     return statusProjectId;
-  }
-
-  private toEpicDto(
-    epic: Record<string, unknown>,
-    statusMap?: Map<string, Record<string, unknown>>,
-    agentNameById?: Map<string, string>,
-  ): Record<string, unknown> {
-    const statusId = epic.statusId as string | undefined;
-    const status = statusId ? statusMap?.get(statusId) : undefined;
-    const agentId = (epic.agentId as string | null | undefined) ?? null;
-    const resolvedAgentName =
-      (agentId ? agentNameById?.get(agentId) : undefined) ?? (epic.agentName as string | undefined);
-
-    return {
-      id: epic.id,
-      title: epic.title,
-      statusId,
-      statusName: status?.name,
-      statusColor: status?.color,
-      statusPosition: status?.position,
-      status,
-      agentId,
-      agentName: resolvedAgentName,
-      parentId: epic.parentId,
-      updatedAt: epic.updatedAt,
-      description: epic.description,
-      createdAt: epic.createdAt,
-      tags: epic.tags,
-    };
   }
 
   private aggregateChildSummaries(

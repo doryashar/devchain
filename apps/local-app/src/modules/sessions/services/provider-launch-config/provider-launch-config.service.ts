@@ -70,11 +70,10 @@ export function resolve(input: LaunchConfigInput): LaunchConfig {
     profileOptionArgs: optionArgs,
   });
 
-  // Claude's fullscreen renderer takes a degraded code path when it detects $TMUX
-  // (cell-diff updates without ESC[K cleanup, leaving stale cells that drift into
-  // scrollback). Unsetting both vars forces the full non-multiplexer renderer.
-  const unsetEnv =
-    input.adapter.providerName === 'claude' ? (['TMUX', 'TMUX_PANE'] as const) : undefined;
+  // Providers declare any env vars that must be cleared from their launch
+  // environment via `launchUnsetEnv` (e.g. Claude unsets $TMUX/$TMUX_PANE to
+  // avoid its degraded multiplexer renderer). Kept provider-agnostic here.
+  const unsetEnv = input.adapter.launchUnsetEnv;
 
   const commandArgs = buildSessionCommand(env, input.providerBinPath, argv, unsetEnv);
 

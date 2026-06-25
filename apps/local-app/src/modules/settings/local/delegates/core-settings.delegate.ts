@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { EventEmitter2 } from '@nestjs/event-emitter';
 import { randomUUID } from 'crypto';
 import { access, constants } from 'fs/promises';
@@ -17,13 +16,10 @@ import {
   MIN_TERMINAL_SEED_MAX_BYTES,
   MAX_TERMINAL_SEED_MAX_BYTES,
   DEFAULT_TERMINAL_INPUT_MODE,
-  DEFAULT_MESSAGE_POOL_DELAY_MS,
   MIN_MESSAGE_POOL_DELAY_MS,
   MAX_MESSAGE_POOL_DELAY_MS,
-  DEFAULT_MESSAGE_POOL_MAX_WAIT_MS,
   MIN_MESSAGE_POOL_MAX_WAIT_MS,
   MAX_MESSAGE_POOL_MAX_WAIT_MS,
-  DEFAULT_MESSAGE_POOL_MAX_MESSAGES,
   MIN_MESSAGE_POOL_MAX_MESSAGES,
   MAX_MESSAGE_POOL_MAX_MESSAGES,
 } from '../../services/settings.constants';

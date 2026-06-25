@@ -10,7 +10,7 @@ jest.mock('../../../common/logging/logger', () => ({
 }));
 
 import { SessionsService } from './sessions.service';
-import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import type { StorageService } from '../../storage/interfaces/storage.interface';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import type { PtyService } from '../../terminal/services/pty.service';
@@ -42,7 +42,7 @@ describe('SessionsService', () => {
   let mockTerminalIO: {
     sessionExists: jest.Mock;
     createEmptySession: jest.Mock;
-    disableAlternateScreen: jest.Mock;
+    setAlternateScreen: jest.Mock;
     destroySession: jest.Mock;
     typeCommand: jest.Mock;
     waitForOutput: jest.Mock;
@@ -91,7 +91,7 @@ describe('SessionsService', () => {
     mockTerminalIO = {
       sessionExists: jest.fn().mockResolvedValue(false),
       createEmptySession: jest.fn().mockResolvedValue({ name: 'tmux-session' }),
-      disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+      setAlternateScreen: jest.fn().mockResolvedValue(undefined),
       destroySession: jest.fn().mockResolvedValue(undefined),
       typeCommand: jest.fn().mockResolvedValue(undefined),
       waitForOutput: jest.fn().mockResolvedValue(true),
@@ -742,6 +742,174 @@ describe('SessionsService', () => {
       expect(sqliteExec).toHaveBeenCalledWith('BEGIN IMMEDIATE');
       expect(sqliteExec).toHaveBeenCalledWith('ROLLBACK');
       expect(sqliteExec).not.toHaveBeenCalledWith('COMMIT');
+    });
+  });
+
+  describe('validateSessionInProject (shared rename/delete ownership guard)', () => {
+    const sessionRow = {
+      id: 'session-1',
+      epic_id: null,
+      agent_id: 'agent-1',
+      tmux_session_id: null,
+      status: 'stopped',
+      started_at: '2024-01-01T00:00:00.000Z',
+      ended_at: '2024-01-01T01:00:00.000Z',
+      last_activity_at: null,
+      activity_state: null,
+      busy_since: null,
+      transcript_path: null,
+      name: null,
+      created_at: '2024-01-01T00:00:00.000Z',
+      updated_at: '2024-01-01T00:00:00.000Z',
+    };
+
+    function withSessionRow(row: unknown): void {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(row),
+        all: jest.fn().mockReturnValue([]),
+      });
+    }
+
+    it('returns the session when the agent belongs to the project', async () => {
+      withSessionRow(sessionRow);
+      storage.getAgent.mockResolvedValue({ id: 'agent-1', projectId: 'project-1' });
+
+      const result = await service.validateSessionInProject('session-1', 'project-1');
+
+      expect(result.id).toBe('session-1');
+      expect(storage.getAgent).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('throws NotFoundError when the session does not exist', async () => {
+      withSessionRow(undefined);
+
+      await expect(service.validateSessionInProject('missing', 'project-1')).rejects.toThrow(
+        NotFoundError,
+      );
+      expect(storage.getAgent).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenError when the session has no agent', async () => {
+      withSessionRow({ ...sessionRow, agent_id: null });
+
+      await expect(service.validateSessionInProject('session-1', 'project-1')).rejects.toThrow(
+        ForbiddenError,
+      );
+      expect(storage.getAgent).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenError when the agent belongs to another project', async () => {
+      withSessionRow(sessionRow);
+      storage.getAgent.mockResolvedValue({ id: 'agent-1', projectId: 'other-project' });
+
+      await expect(service.validateSessionInProject('session-1', 'project-1')).rejects.toThrow(
+        ForbiddenError,
+      );
+    });
+  });
+
+  // TWO-GATE INVARIANT + TIMING DEFAULT.
+  // The alt-screen policy is enforced at TWO gates: (1) the launch/restore
+  // pipelines call `setAlternateScreen(target, <flag>)`, and (2) the PTY strip
+  // gate skips stripAlternateScreenSequences when <flag> is true. BOTH gates
+  // resolve the SAME adapter field — `adapter.terminalOutputBehavior?.usesAlternateScreen`
+  // — and this resolver (usesAlternateScreenFor) is what gate 2 (PTY) reads.
+  // Gate 1 reads the field directly off the adapter in the pipeline (see
+  // session-launch/restore-pipeline.spec.ts → "alternate-screen policy"). These
+  // tests lock the resolver semantics: it reads the identical field, defaults
+  // safely to false, and never throws.
+  // Layer: service unit test — cheapest layer to prove the resolver + timing
+  // default without spinning up a pipeline or PTY.
+  describe('usesAlternateScreenFor (two-gate invariant + timing default)', () => {
+    const runningMetaRow = {
+      tmux_session_id: 'tmux-running',
+      provider_name_at_launch: 'opencode',
+    };
+
+    it('returns true when the resolved adapter advertises usesAlternateScreen: true', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(runningMetaRow),
+        all: jest.fn().mockReturnValue([]),
+      });
+      providerAdapterFactory.getAdapter.mockReturnValue({
+        providerName: 'opencode',
+        terminalOutputBehavior: { usesAlternateScreen: true },
+      });
+
+      expect(service.usesAlternateScreenFor('session-1')).toBe(true);
+      // Resolved the same field the pipelines read — divergence is structurally impossible.
+      expect(providerAdapterFactory.getAdapter).toHaveBeenCalledWith('opencode');
+    });
+
+    it('returns false when the adapter advertises usesAlternateScreen: false', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(runningMetaRow),
+        all: jest.fn().mockReturnValue([]),
+      });
+      providerAdapterFactory.getAdapter.mockReturnValue({
+        providerName: 'claude',
+        terminalOutputBehavior: { usesAlternateScreen: false },
+      });
+
+      expect(service.usesAlternateScreenFor('session-1')).toBe(false);
+    });
+
+    it('returns false when the adapter has no terminalOutputBehavior (default providers)', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(runningMetaRow),
+        all: jest.fn().mockReturnValue([]),
+      });
+      // claude/codex/gemini adapters do not set terminalOutputBehavior
+      providerAdapterFactory.getAdapter.mockReturnValue({ providerName: 'codex' });
+
+      expect(service.usesAlternateScreenFor('session-1')).toBe(false);
+    });
+
+    // TIMING DEFAULT — a not-yet-running session (no tmux_session_id yet, e.g.
+    // during the launch pipeline before createTmuxSession, or a stopped session)
+    // must resolve to the SAFE default false so the PTY strip stays active.
+    it('returns safe false for a not-yet-running session (no tmux session meta)', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(undefined), // session row not found
+        all: jest.fn().mockReturnValue([]),
+      });
+
+      expect(service.usesAlternateScreenFor('pending-session')).toBe(false);
+      // Adapter factory MUST NOT be consulted when meta lookup fails — safe default.
+      expect(providerAdapterFactory.getAdapter).not.toHaveBeenCalled();
+    });
+
+    it('returns safe false when the session row has no provider_name_at_launch', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest
+          .fn()
+          .mockReturnValue({ tmux_session_id: 'tmux-1', provider_name_at_launch: null }),
+        all: jest.fn().mockReturnValue([]),
+      });
+
+      expect(service.usesAlternateScreenFor('session-1')).toBe(false);
+      expect(providerAdapterFactory.getAdapter).not.toHaveBeenCalled();
+    });
+
+    it('returns safe false (never throws) when the adapter factory throws for an unknown provider', () => {
+      sqlitePrepare.mockReturnValue({
+        run: insertRunMock,
+        get: jest.fn().mockReturnValue(runningMetaRow),
+        all: jest.fn().mockReturnValue([]),
+      });
+      providerAdapterFactory.getAdapter.mockImplementation(() => {
+        throw new Error('unknown provider');
+      });
+
+      // Must not propagate — a resolver throw would crash the PTY onData hot path.
+      expect(() => service.usesAlternateScreenFor('session-1')).not.toThrow();
+      expect(service.usesAlternateScreenFor('session-1')).toBe(false);
     });
   });
 });

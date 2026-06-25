@@ -29,18 +29,26 @@ describe('Codex pipeline: fixture → parser → unified model', () => {
     jest.clearAllMocks();
   });
 
-  it('should parse the fixture and produce valid messages', async () => {
+  it('should parse the fixture and coalesce the tool turn into one assistant', async () => {
     const result = await parseCodexJsonl(filePath, { pricingService: mockPricing });
 
-    // Fixture has: user msg, reasoning+assistant, function_call+output, assistant, function_call+output, assistant
-    expect(result.messages.length).toBeGreaterThanOrEqual(4);
+    // Fixture is ONE turn (task_started→task_complete) with 2 tool rounds. It coalesces to
+    // user + a single assistant carrying both rounds (reasoning, texts, 2 calls, 2 results).
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
 
-    // First message should be user
-    expect(result.messages[0].role).toBe('user');
+    // First message is the user prompt.
     expect(result.messages[0].content[0]).toEqual({
       type: 'text',
       text: 'Fix the bug in auth.ts',
     });
+
+    // The single assistant carries both rounds' tool calls + results (no data loss).
+    const assistant = result.messages[1];
+    expect(assistant.toolCalls.map((c) => c.id)).toEqual(['call_001', 'call_002']);
+    expect(assistant.toolResults.map((r) => r.toolCallId)).toEqual(['call_001', 'call_002']);
+    // No synthetic user-role tool-result message.
+    expect(result.messages.filter((m) => m.role === 'user')).toHaveLength(1);
   });
 
   it('should extract session ID from fixture', async () => {

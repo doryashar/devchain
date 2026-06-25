@@ -302,6 +302,14 @@ export class WorktreesService implements OnModuleInit, OnModuleDestroy {
           worktreeName: input.name,
           env: {
             CONTAINER_PROJECT_ID: projectId,
+            // Forward the parent's cloud-UI setting so container worktrees stay
+            // consistent with the main instance (and with process worktrees, which
+            // inherit it via ...process.env). Conditional on purpose: unset in the
+            // parent → unset in the child → child defaults ON; an explicit value
+            // (e.g. '0' from --no-cloud) is forwarded so the child honours it.
+            ...(process.env.DEVCHAIN_CLOUD_UI_ENABLED !== undefined
+              ? { DEVCHAIN_CLOUD_UI_ENABLED: process.env.DEVCHAIN_CLOUD_UI_ENABLED }
+              : {}),
           },
         });
         containerId = container.id;

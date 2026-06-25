@@ -41,6 +41,17 @@ describe('TranscriptPathValidator', () => {
         expect(result).toBe(input);
       });
 
+      it('should accept a valid OpenCode DB container path', () => {
+        const input = `${homeDir}/.local/share/opencode/opencode.db`;
+        const result = validator.validateShape(input, 'opencode');
+        expect(result).toBe(input);
+      });
+
+      it('should reject an OpenCode path under the wrong provider', () => {
+        const input = `${homeDir}/.local/share/opencode/opencode.db`;
+        expect(() => validator.validateShape(input, 'claude')).toThrow(ValidationError);
+      });
+
       it('should resolve ~ to home directory', () => {
         const input = '~/.claude/projects/my-project/session.jsonl';
         const expected = path.join(homeDir, '.claude/projects/my-project/session.jsonl');

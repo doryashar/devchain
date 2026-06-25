@@ -120,7 +120,7 @@ export class SessionRestorePipeline {
           profileOptions: options,
           modelOverride: agent.modelOverride,
           providerBinPath: provider.binPath,
-          providerEnv: provider.env,
+          providerEnv: this.storage.getProviderEnvForProject(provider.id, projectId),
           configEnv,
           provider,
           hookContext: isHookCapable(adapter)
@@ -179,7 +179,10 @@ export class SessionRestorePipeline {
           }
         });
 
-        await this.terminalIO.disableAlternateScreen({ name: tmuxSessionName });
+        await this.terminalIO.setAlternateScreen(
+          { name: tmuxSessionName },
+          adapter.terminalOutputBehavior?.usesAlternateScreen ?? false,
+        );
         this.terminalIO.startHealthCheck(tmuxSessionName, locked.id);
 
         // Phase 8: bindStreaming (BEFORE issuing the restore command)

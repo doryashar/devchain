@@ -36,6 +36,16 @@ import { ActivityProxyController } from './controllers/activity-proxy.controller
     CloudEgressBridgeService,
     ProjectActivityReporterService,
   ],
-  exports: [CloudSessionManagerService, RefreshGateService, EncryptedTokenStoreService],
+  exports: [
+    CloudSessionManagerService,
+    RefreshGateService,
+    EncryptedTokenStoreService,
+    // Exposed so the cloud-tunnel AskUserQuestion native-push gate (which lives with
+    // the tunnel client to avoid a cloud↔cloud-tunnel module cycle) can reuse the SAME
+    // egress queue, payload mapper, and project-egress config as CloudEgressBridge.
+    EgressQueueService,
+    EventMapperService,
+    ProjectEgressConfigService,
+  ],
 })
 export class CloudModule {}

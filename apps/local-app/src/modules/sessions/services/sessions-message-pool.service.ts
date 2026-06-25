@@ -168,6 +168,8 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
     const {
       source = 'unknown',
       submitKeys = ['Enter'],
+      preKeys,
+      preDelayMs,
       senderAgentId,
       immediate = false,
     } = options;
@@ -207,7 +209,11 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
           unconfirmed,
           skipped,
           retryCount,
-        } = await this.deliverMessage(agentId, text, submitKeys, { skipConfirmation: immediate });
+        } = await this.deliverMessage(agentId, text, submitKeys, {
+          skipConfirmation: immediate,
+          preKeys,
+          preDelayMs,
+        });
         const status = unconfirmed ? 'unconfirmed' : 'delivered';
         const deliveredAt = Date.now();
         this.messageLog.update(logEntryId, {
@@ -633,7 +639,7 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
     agentId: string,
     text: string,
     submitKeys: string[],
-    opts?: { skipConfirmation?: boolean },
+    opts?: { skipConfirmation?: boolean; preKeys?: string[]; preDelayMs?: number },
   ): Promise<{ nonce: string; unconfirmed?: boolean; skipped?: boolean; retryCount: number }> {
     const activeSessions = await this.sessions.listActiveSessions();
     const session = activeSessions.find((s) => s.agentId === agentId);
@@ -654,7 +660,13 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
         const delivery = await this.terminalIO.deliverImmediate(
           { name: session.tmuxSessionId! },
           text,
-          { submitKeys, postPasteDelayMs, confirm: false },
+          {
+            submitKeys,
+            postPasteDelayMs,
+            confirm: false,
+            preKeys: opts?.preKeys,
+            preDelayMs: opts?.preDelayMs,
+          },
         );
         result = { nonce: delivery.nonce, skipped: true, retryCount: 0 };
       } else {
@@ -662,6 +674,8 @@ export class SessionsMessagePoolService implements OnModuleDestroy {
           agentId,
           submitKeys,
           postPasteDelayMs,
+          preKeys: opts?.preKeys,
+          preDelayMs: opts?.preDelayMs,
         });
         result = {
           nonce: delivery.nonce,

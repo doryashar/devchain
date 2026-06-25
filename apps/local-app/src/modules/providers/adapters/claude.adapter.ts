@@ -55,6 +55,11 @@ export class ClaudeAdapter
   // other providers so xterm receives CRLF replay semantics consistently.
   readonly terminalOutputBehavior: TerminalOutputBehavior = { rawLineEndings: false };
 
+  // Claude's fullscreen renderer takes a degraded code path when it detects $TMUX
+  // (cell-diff updates without ESC[K cleanup, leaving stale cells that drift into
+  // scrollback). Unsetting both vars forces the full non-multiplexer renderer.
+  readonly launchUnsetEnv = ['TMUX', 'TMUX_PANE'] as const;
+
   readonly transcriptDiscoveryStrategy = 'first' as const;
   readonly transcriptContentSearchMaxBytes = 16_384;
 

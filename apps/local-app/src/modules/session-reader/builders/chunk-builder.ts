@@ -37,7 +37,6 @@ export function classifyMessage(msg: UnifiedMessage): MessageCategory {
   if (isHardNoise(msg)) return 'hardNoise';
   if (isCompactMessage(msg)) return 'compact';
   if (isSystemMessage(msg)) return 'system';
-  if (msg.role === 'user' && msg.toolResults.length > 0) return 'ai';
   if (isUserChunkMessage(msg)) return 'user';
   return 'ai';
 }

@@ -42,6 +42,7 @@ interface CacheIndexEntry {
   tags?: string[];
   authorName?: string;
   isOfficial?: boolean;
+  order?: number;
 }
 
 /**
@@ -74,6 +75,7 @@ export interface CachedTemplateInfo {
   tags?: string[];
   authorName?: string;
   isOfficial?: boolean;
+  order?: number;
 }
 
 /**
@@ -172,6 +174,7 @@ export class TemplateCacheService implements OnModuleInit {
     tags?: string[];
     authorName?: string;
     isOfficial?: boolean;
+    order?: number;
   } {
     const manifest = content._manifest as
       | {
@@ -181,6 +184,7 @@ export class TemplateCacheService implements OnModuleInit {
           tags?: string[];
           authorName?: string;
           isOfficial?: boolean;
+          order?: number;
         }
       | undefined;
 
@@ -193,6 +197,7 @@ export class TemplateCacheService implements OnModuleInit {
       tags: manifest.tags,
       authorName: manifest.authorName,
       isOfficial: manifest.isOfficial,
+      order: manifest.order,
     };
   }
 
@@ -210,6 +215,7 @@ export class TemplateCacheService implements OnModuleInit {
       tags?: string[];
       authorName?: string;
       isOfficial?: boolean;
+      order?: number;
     },
   ): void {
     if (!this.index.templates[slug]) {
@@ -244,6 +250,9 @@ export class TemplateCacheService implements OnModuleInit {
       }
       if (displayFields.isOfficial !== undefined) {
         this.index.templates[slug].isOfficial = displayFields.isOfficial;
+      }
+      if (displayFields.order !== undefined) {
+        this.index.templates[slug].order = displayFields.order;
       }
     }
 
@@ -399,6 +408,7 @@ export class TemplateCacheService implements OnModuleInit {
       tags: info.tags,
       authorName: info.authorName,
       isOfficial: info.isOfficial,
+      order: info.order,
     }));
   }
 

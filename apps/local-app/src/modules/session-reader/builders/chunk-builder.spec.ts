@@ -1,7 +1,14 @@
 import * as path from 'node:path';
 import { buildChunks, classifyMessage, computeChunkMetrics } from './chunk-builder';
 import { parseClaudeJsonl } from '../parsers/claude-jsonl.parser';
-import type { UnifiedMessage, TokenUsage } from '../dtos/unified-session.types';
+import { coalesceAssistantTurns } from '../adapters/utils/coalesce-turns';
+import type {
+  UnifiedMessage,
+  UnifiedMetrics,
+  UnifiedToolCall,
+  UnifiedToolResult,
+  TokenUsage,
+} from '../dtos/unified-session.types';
 import type { MessageCategory } from '../dtos/unified-chunk.types';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +37,25 @@ function textBlock(text: string) {
 function usage(input: number, output: number, cacheRead = 0, cacheCreation = 0): TokenUsage {
   return { input, output, cacheRead, cacheCreation };
 }
+
+const ZERO_METRICS: UnifiedMetrics = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  totalTokens: 0,
+  totalContextConsumption: 0,
+  compactionCount: 0,
+  phaseBreakdowns: [],
+  visibleContextTokens: 0,
+  totalContextTokens: 0,
+  contextWindowTokens: 0,
+  costUsd: 0,
+  primaryModel: '',
+  durationMs: 0,
+  messageCount: 0,
+  isOngoing: false,
+};
 
 // ---------------------------------------------------------------------------
 // classifyMessage
@@ -90,18 +116,10 @@ describe('classifyMessage', () => {
     expect(classifyMessage(msg)).toBe<MessageCategory>('system');
   });
 
-  it('should classify user tool-result message with isMeta absent as "ai"', () => {
-    const msg = makeMsg({
-      id: 'u-tool-1',
-      role: 'user',
-      content: [],
-      toolResults: [{ toolCallId: 'tc-1', content: 'result content', isError: false }],
-    });
-    delete (msg as unknown as { isMeta?: boolean }).isMeta;
-    expect(classifyMessage(msg)).toBe<MessageCategory>('ai');
-  });
-
-  it('should classify user tool-result message with isMeta=true as "ai"', () => {
+  it('should classify a meta tool-result user message (no text) as "ai" via the default', () => {
+    // After the parser fold + continuation coalesce, standalone tool_result user messages no
+    // longer reach the chunk builder; a leftover meta tool-result (no text) still falls to the
+    // default 'ai' classification (isMeta blocks the 'user' branch), keeping it inside the turn.
     const msg = makeMsg({
       id: 'u-tool-2',
       role: 'user',
@@ -288,22 +306,177 @@ describe('buildChunks', () => {
     }
   });
 
-  it('should keep fixture tool_result user messages inside AI chunks', async () => {
+  it('renders a BIG coalesced assistant (many tool steps) as ONE ai chunk with all steps in order (no chunk-budget regression)', () => {
+    // After the cross-provider coalesce, a single assistant turn can carry MANY tool
+    // rounds (calls + results + intermediate texts) on one message. This locks two
+    // things: (1) rendering is preserved — every step still appears, in order, inside
+    // the one AI chunk; (2) the turn stays a SINGLE message, so it can never blow the
+    // pagination chunk budget (`session-reader.service.ts` MAX_CHUNK_SIZE=100 caps
+    // MESSAGES per page, and a coalesced turn is exactly 1 message — strictly safer
+    // than the pre-coalesce N+1 inflation). N=5 rounds is well past any realistic turn.
+    const ROUNDS = 5;
+    const content: UnifiedMessage['content'] = [textBlock('Starting.')];
+    const toolCalls: UnifiedToolCall[] = [];
+    const toolResults: UnifiedToolResult[] = [];
+    for (let i = 1; i <= ROUNDS; i++) {
+      const id = `tc-${i}`;
+      content.push({
+        type: 'tool_call',
+        toolCallId: id,
+        toolName: 'read',
+        input: { path: `/f${i}` },
+      });
+      content.push({ type: 'tool_result', toolCallId: id, content: `out-${i}`, isError: false });
+      content.push(textBlock(`After round ${i}.`));
+      toolCalls.push({ id, name: 'read', input: { path: `/f${i}` }, isTask: false });
+      toolResults.push({ toolCallId: id, content: `out-${i}`, isError: false });
+    }
+    content.push(textBlock('All done.'));
+    const messages: UnifiedMessage[] = [
+      makeMsg({ id: 'u1', role: 'user', content: [textBlock('Do the work')] }),
+      makeMsg({
+        id: 'a-coalesced',
+        role: 'assistant',
+        content,
+        toolCalls,
+        toolResults,
+        usage: usage(1000, 500, 50, 20),
+      }),
+    ];
+
+    const chunks = buildChunks(messages);
+
+    // ONE user chunk + ONE ai chunk (the coalesced assistant is not split).
+    expect(chunks.map((c) => c.type)).toEqual(['user', 'ai']);
+    const aiChunk = chunks[1];
+    expect(aiChunk.type).toBe('ai');
+    if (aiChunk.type === 'ai') {
+      // The turn is a SINGLE message — the chunk-budget invariant (no inflation).
+      expect(aiChunk.messages).toHaveLength(1);
+      expect(aiChunk.messages[0].id).toBe('a-coalesced');
+
+      // Rendering preserved: every content block still appears, in original order.
+      const kinds = aiChunk.messages[0].content.map((b) => b.type);
+      expect(kinds).toEqual(content.map((b) => b.type));
+      expect(kinds.filter((k) => k === 'tool_call')).toHaveLength(ROUNDS);
+      expect(kinds.filter((k) => k === 'tool_result')).toHaveLength(ROUNDS);
+      // Final block is the assistant's closing text.
+      expect(kinds[kinds.length - 1]).toBe('text');
+
+      // Every tool call + its result is linked by toolCallId (no data loss).
+      expect(aiChunk.messages[0].toolCalls).toHaveLength(ROUNDS);
+      expect(aiChunk.messages[0].toolResults).toHaveLength(ROUNDS);
+
+      // Semantic extraction surfaces every round (5 calls + 5 results).
+      expect(aiChunk.semanticSteps.filter((s) => s.type === 'tool_call')).toHaveLength(ROUNDS);
+      expect(aiChunk.semanticSteps.filter((s) => s.type === 'tool_result')).toHaveLength(ROUNDS);
+
+      // Chunk metrics: usage summed onto the single message, messageCount = 1 (no budget blow).
+      expect(aiChunk.metrics.inputTokens).toBe(1000);
+      expect(aiChunk.metrics.outputTokens).toBe(500);
+      expect(aiChunk.metrics.messageCount).toBe(1);
+    }
+  });
+
+  it('preserves semantic-step ORDER when coalescing a multi-row turn (tool-calls → tool-calls → stop)', () => {
+    // A real multi-step turn arrives as SEPARATE assistant messages (one per model
+    // invocation), each with a continuation signal (stopReason='tool_use') except
+    // the last (stopReason='end_turn'). The coalescer folds them into ONE assistant;
+    // this test proves the fold preserves content-block order — no steps are lost,
+    // reordered, or duplicated — so rendering is unchanged after coalescing.
+    const step1 = makeMsg({
+      id: 'a1',
+      role: 'assistant',
+      stopReason: 'tool_use',
+      content: [
+        textBlock('Let me check.'),
+        { type: 'tool_call', toolCallId: 'tc-1', toolName: 'read', input: { path: '/f1' } },
+      ],
+      toolCalls: [{ id: 'tc-1', name: 'read', input: { path: '/f1' }, isTask: false }],
+      toolResults: [{ toolCallId: 'tc-1', content: 'out-1', isError: false }],
+    });
+    const step2 = makeMsg({
+      id: 'a2',
+      role: 'assistant',
+      stopReason: 'tool_use',
+      content: [
+        textBlock('Applying the fix.'),
+        { type: 'tool_call', toolCallId: 'tc-2', toolName: 'write', input: { path: '/f1' } },
+      ],
+      toolCalls: [{ id: 'tc-2', name: 'write', input: { path: '/f1' }, isTask: false }],
+      toolResults: [{ toolCallId: 'tc-2', content: 'ok', isError: false }],
+    });
+    const step3 = makeMsg({
+      id: 'a3',
+      role: 'assistant',
+      stopReason: 'end_turn',
+      content: [textBlock('All done.')],
+    });
+
+    const preCoalesce: UnifiedMessage[] = [
+      makeMsg({ id: 'u1', role: 'user', content: [textBlock('Do the work')] }),
+      step1,
+      step2,
+      step3,
+    ];
+
+    // Expected content order = concatenation of all 3 rows' content blocks.
+    const expectedContentKinds = [
+      ...step1.content.map((b) => b.type),
+      ...step2.content.map((b) => b.type),
+      ...step3.content.map((b) => b.type),
+    ];
+
+    // Coalesce (the shared central pass in getOrParse).
+    const coalesced = coalesceAssistantTurns({
+      messages: preCoalesce,
+      metrics: { ...ZERO_METRICS, messageCount: preCoalesce.length },
+    });
+
+    // The 3 assistant rows folded into ONE → 2 messages total.
+    expect(coalesced.messages).toHaveLength(2);
+    expect(coalesced.metrics.messageCount).toBe(2);
+
+    // Build chunks from the coalesced session.
+    const chunks = buildChunks(coalesced.messages);
+    expect(chunks.map((c) => c.type)).toEqual(['user', 'ai']);
+
+    const aiChunk = chunks[1];
+    expect(aiChunk.type).toBe('ai');
+    if (aiChunk.type === 'ai') {
+      // The folded assistant is a SINGLE message.
+      expect(aiChunk.messages).toHaveLength(1);
+      // Content-block order preserved across the folded rows (rendering invariant).
+      const kinds = aiChunk.messages[0].content.map((b) => b.type);
+      expect(kinds).toEqual(expectedContentKinds);
+      // Semantic extraction surfaces every round in order.
+      expect(aiChunk.semanticSteps.filter((s) => s.type === 'tool_call')).toHaveLength(2);
+      // Both tool calls + results linked (no data loss).
+      expect(aiChunk.messages[0].toolCalls).toHaveLength(2);
+      expect(aiChunk.messages[0].toolResults).toHaveLength(2);
+      // Final content block is the assistant's closing text.
+      expect(kinds[kinds.length - 1]).toBe('text');
+    }
+  });
+
+  it('folds fixture tool_result entries onto the assistant turn inside AI chunks', async () => {
     const fixturePath = path.join(__dirname, '..', '__fixtures__', 'session-with-tools.jsonl');
     const parsed = await parseClaudeJsonl(fixturePath);
 
     const chunks = buildChunks(parsed.messages);
     expect(chunks.map((c) => c.type)).toEqual(['user', 'ai', 'user', 'ai']);
 
+    // u-102/u-104 fold onto a-101/a-103 AND the continuation assistants a-102/a-104 coalesce
+    // onto a-101/a-103 — each tool turn is a single assistant message in the AI chunk.
     const firstAiChunk = chunks[1];
     expect(firstAiChunk.type).toBe('ai');
-    expect(firstAiChunk.messages.map((m) => m.id)).toEqual(['a-101', 'u-102', 'a-102']);
-    expect(firstAiChunk.messages[1].toolResults).toHaveLength(1);
+    expect(firstAiChunk.messages.map((m) => m.id)).toEqual(['a-101']);
+    expect(firstAiChunk.messages[0].toolResults).toHaveLength(1);
 
     const secondAiChunk = chunks[3];
     expect(secondAiChunk.type).toBe('ai');
-    expect(secondAiChunk.messages.map((m) => m.id)).toEqual(['a-103', 'u-104', 'a-104']);
-    expect(secondAiChunk.messages[1].toolResults).toHaveLength(1);
+    expect(secondAiChunk.messages.map((m) => m.id)).toEqual(['a-103']);
+    expect(secondAiChunk.messages[0].toolResults).toHaveLength(1);
   });
 
   it('should link fixture semantic tool_call and tool_result steps by toolCallId', async () => {

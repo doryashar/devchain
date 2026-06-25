@@ -7,16 +7,12 @@
  */
 
 import type {
-  TokenUsage,
   TextContentBlock,
   ThinkingContentBlock,
   ToolCallContentBlock,
   ToolResultContentBlock,
   ImageContentBlock,
   UnifiedContentBlock,
-  UnifiedToolCall,
-  UnifiedToolResult,
-  UnifiedMessageRole,
   UnifiedMessage,
 } from './unified-message.types';
 

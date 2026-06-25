@@ -1,11 +1,13 @@
 import type { StorageService } from '../../storage/interfaces/storage.interface';
 import {
   importProviderSettings,
+  importProjectWithHelper,
   preserveImportedEnv,
   createImportedTeams,
   applyTeamOverrides,
   pruneUnavailableTeamProfileSelections,
 } from './project-import';
+import { ConflictError, ValidationError } from '../../../common/errors/error-types';
 
 jest.mock('../../../common/logging/logger', () => ({
   createLogger: () => ({ info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() }),
@@ -1003,5 +1005,389 @@ describe('applyTeamOverrides', () => {
       // profileConfigSelections should reference the post-remap profile id (p-claude)
       expect(createArg.profileConfigSelections?.[0]?.profileId).toBe('p-claude');
     });
+  });
+});
+
+// ─── importProjectWithHelper — session preservation ────────────────────────
+describe('importProjectWithHelper — session preservation', () => {
+  // Fixed template-level IDs used across tests
+  const PROFILE_TPL_ID = '11111111-1111-1111-1111-111111111111';
+  const AGENT_TPL_1_ID = '22222222-2222-2222-2222-222222222221';
+  const AGENT_TPL_2_ID = '22222222-2222-2222-2222-222222222222';
+  const PROJECT_ID = 'project-session-test';
+
+  // Minimal valid profile for the template payload
+  const defaultProfile = {
+    id: PROFILE_TPL_ID,
+    name: 'Default Profile',
+    provider: { name: 'claude' },
+  };
+
+  // Build a minimal valid import payload
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const makePayload = (agents: any[], profiles: any[] = [defaultProfile]) => ({
+    profiles,
+    agents,
+    statuses: [],
+    prompts: [],
+  });
+
+  // Base agent entries for the template (each references defaultProfile)
+  const makeTemplateAgent = (name: string, id: string = AGENT_TPL_1_ID) => ({
+    id,
+    name,
+    profileId: PROFILE_TPL_ID,
+  });
+
+  // Storage mock factory — all methods return sensible defaults; pass overrides to customise
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const makeStorage = (overrides: Record<string, jest.Mock> = {}): Record<string, jest.Mock> => ({
+    listProviders: jest.fn().mockResolvedValue({
+      items: [{ id: 'provider-claude', name: 'claude' }],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    }),
+    listPrompts: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listAgentProfiles: jest
+      .fn()
+      .mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listAgents: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listStatuses: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listWatchers: jest.fn().mockResolvedValue([]),
+    listSubscribers: jest.fn().mockResolvedValue([]),
+    listScheduledEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+    listEpics: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    countEpicsByStatus: jest.fn().mockResolvedValue(0),
+    deleteAgent: jest.fn().mockResolvedValue(undefined),
+    deleteAgentProfile: jest.fn().mockResolvedValue(undefined),
+    deletePrompt: jest.fn().mockResolvedValue(undefined),
+    deleteStatus: jest.fn().mockResolvedValue(undefined),
+    updateStatus: jest.fn().mockImplementation(async (id: string) => ({ id })),
+    deleteSubscriber: jest.fn().mockResolvedValue(undefined),
+    deleteScheduledEpic: jest.fn().mockResolvedValue(undefined),
+    createAgentProfile: jest.fn().mockImplementation(async (data: { name: string }) => ({
+      id: `new-profile-${data.name.toLowerCase().replace(/\s+/g, '-')}`,
+      ...data,
+    })),
+    createProfileProviderConfig: jest
+      .fn()
+      .mockImplementation(async (data: { profileId: string }) => ({
+        id: `new-config-${data.profileId}`,
+      })),
+    createAgent: jest.fn().mockImplementation(async (data: { name: string }) => ({
+      id: `new-agent-${data.name.trim().toLowerCase().replace(/\s+/g, '-')}`,
+      ...data,
+    })),
+    createPrompt: jest.fn().mockImplementation(async (data: { title: string }) => ({
+      id: `new-prompt-${data.title}`,
+      ...data,
+    })),
+    createStatus: jest.fn().mockImplementation(async (data: { label: string }) => ({
+      id: `new-status-${data.label}`,
+      ...data,
+    })),
+    parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map()),
+    applySessionPlan: jest.fn().mockResolvedValue(undefined),
+    updateProvider: jest.fn().mockResolvedValue(undefined),
+    updateEpic: jest.fn().mockResolvedValue(undefined),
+    listProvidersByIds: jest.fn().mockResolvedValue([]),
+    listProviderModelsByProviderIds: jest.fn().mockResolvedValue([]),
+    bulkCreateProviderModels: jest.fn().mockResolvedValue({ added: [], existing: [] }),
+    listProfileProviderConfigsByProfile: jest.fn().mockResolvedValue([]),
+    ...overrides,
+  });
+
+  // Deps factory — wires the storage mock into the full ImportProjectDeps shape
+  const makeDeps = (
+    storage: ReturnType<typeof makeStorage>,
+    sessionsMock = jest.fn().mockReturnValue([]),
+  ) => ({
+    storage: storage as unknown as StorageService,
+    sessions: { getActiveSessionsForProject: sessionsMock },
+    settings: {
+      updateSettings: jest.fn().mockResolvedValue(undefined),
+      setProjectTemplateMetadata: jest.fn().mockResolvedValue(undefined),
+      clearProjectPresets: jest.fn().mockResolvedValue(undefined),
+      setProjectPresets: jest.fn().mockResolvedValue(undefined),
+    } as unknown as import('../../settings/services/settings.service').SettingsService,
+    watchersService: { deleteWatcher: jest.fn().mockResolvedValue(undefined) },
+    unifiedTemplateService: {
+      getBundledTemplate: jest.fn().mockImplementation(() => {
+        throw new Error('not bundled');
+      }),
+    },
+    computeFamilyAlternatives: jest
+      .fn()
+      .mockResolvedValue({ alternatives: [], missingProviders: [], canImport: true }),
+    createWatchersFromPayload: jest.fn().mockResolvedValue({ created: 0, watcherIdMap: {} }),
+    createSubscribersFromPayload: jest.fn().mockResolvedValue({ created: 0, subscriberIdMap: {} }),
+    applyProjectSettings: jest.fn().mockResolvedValue({ initialPromptSet: false }),
+    getImportErrorMessage: jest.fn().mockImplementation((e: unknown) => String(e)),
+  });
+
+  it('(a) preserves sessions when old agent name matches new template agent name', async () => {
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-agent-1', name: 'Coder', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map([['old-agent-1', ['sess-1']]])),
+      createAgent: jest.fn().mockResolvedValue({ id: 'new-coder-id', name: 'Coder' }),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 1, removedCount: 0 },
+    });
+    expect(storage.applySessionPlan).toHaveBeenCalledWith(
+      [{ sessionId: 'sess-1', newAgentId: 'new-coder-id' }],
+      [],
+    );
+  });
+
+  it('(b) deletes sessions when old agent name has no match in new template', async () => {
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-reviewer-id', name: 'Reviewer', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest
+        .fn()
+        .mockResolvedValue(new Map([['old-reviewer-id', ['sess-rev-1']]])),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 0, removedCount: 1 },
+    });
+    expect(storage.applySessionPlan).toHaveBeenCalledWith([], ['sess-rev-1']);
+  });
+
+  it('(c) reassigns all sessions when old agent has multiple sessions and name matches', async () => {
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-coder-id', name: 'Coder', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest
+        .fn()
+        .mockResolvedValue(new Map([['old-coder-id', ['s1', 's2', 's3']]])),
+      createAgent: jest.fn().mockResolvedValue({ id: 'new-coder-id', name: 'Coder' }),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 3, removedCount: 0 },
+    });
+    expect(storage.applySessionPlan).toHaveBeenCalledWith(
+      [
+        { sessionId: 's1', newAgentId: 'new-coder-id' },
+        { sessionId: 's2', newAgentId: 'new-coder-id' },
+        { sessionId: 's3', newAgentId: 'new-coder-id' },
+      ],
+      [],
+    );
+  });
+
+  it('(d) merges sessions from two old agents with the same lowercased name into one new agent', async () => {
+    // Defensive scenario: duplicate OLD names (schema doesn't prevent it on old data).
+    // Both old agents have the same lowercased name 'coder', each with one session.
+    // New template has one 'Coder' agent — both sessions should be reassigned to it.
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [
+          { id: 'old-a1', name: 'Coder', profileId: 'old-profile-1' },
+          { id: 'old-a2', name: 'coder', profileId: 'old-profile-1' },
+        ],
+        total: 2,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(
+        new Map([
+          ['old-a1', ['sess-1']],
+          ['old-a2', ['sess-2']],
+        ]),
+      ),
+      createAgent: jest.fn().mockResolvedValue({ id: 'new-coder-id', name: 'Coder' }),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 2, removedCount: 0 },
+    });
+    const [toReassign] = (storage.applySessionPlan as jest.Mock).mock.calls[0];
+    expect(toReassign).toHaveLength(2);
+    expect(toReassign.every((r: { newAgentId: string }) => r.newAgentId === 'new-coder-id')).toBe(
+      true,
+    );
+  });
+
+  it('(e) throws ValidationError before any DB mutation when new template has duplicate agent names', async () => {
+    // Both 'Coder' and 'coder' normalise to the same key — hard-fail before touching storage.
+    const storage = makeStorage({
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-a1', name: 'Coder', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+    });
+    const deps = makeDeps(storage);
+
+    await expect(
+      importProjectWithHelper(
+        {
+          projectId: PROJECT_ID,
+          payload: makePayload([
+            makeTemplateAgent('Coder', AGENT_TPL_1_ID),
+            makeTemplateAgent('coder', AGENT_TPL_2_ID),
+          ]),
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ValidationError);
+
+    expect(storage.parkSessionsFromAgents).not.toHaveBeenCalled();
+    expect(storage.applySessionPlan).not.toHaveBeenCalled();
+    expect(storage.deleteAgent).not.toHaveBeenCalled();
+    expect(storage.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('(f) handles empty parked map — no sessions in old project', async () => {
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-a1', name: 'Coder', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map()),
+      createAgent: jest.fn().mockResolvedValue({ id: 'new-coder-id', name: 'Coder' }),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 0, removedCount: 0 },
+    });
+    expect(storage.applySessionPlan).toHaveBeenCalledWith([], []);
+  });
+
+  it('(g) deletes all sessions when new template has zero agents', async () => {
+    // Old project has sessions; new template has no agents.
+    // All parked sessions must be scheduled for deletion.
+    const storage = makeStorage({
+      listAgentProfiles: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      listAgents: jest.fn().mockResolvedValue({
+        items: [{ id: 'old-a1', name: 'Coder', profileId: 'old-profile-1' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      }),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map([['old-a1', ['s1', 's2']]])),
+    });
+    const deps = makeDeps(storage);
+
+    const result = await importProjectWithHelper(
+      // Payload has no profiles or agents — empty template
+      { projectId: PROJECT_ID, payload: makePayload([], []) },
+      deps,
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      sessionPreservation: { preservedCount: 0, removedCount: 2 },
+    });
+    expect(storage.applySessionPlan).toHaveBeenCalledWith([], ['s1', 's2']);
+  });
+
+  it('(h) active running session still blocks import — regression lock on ConflictError path', async () => {
+    const storage = makeStorage();
+    const activeSessions = jest
+      .fn()
+      .mockReturnValue([{ id: 'running-sess-1', agentId: 'agent-x' }]);
+    const deps = makeDeps(storage, activeSessions);
+
+    await expect(
+      importProjectWithHelper(
+        { projectId: PROJECT_ID, payload: makePayload([makeTemplateAgent('Coder')]) },
+        deps,
+      ),
+    ).rejects.toThrow(ConflictError);
+
+    expect(storage.parkSessionsFromAgents).not.toHaveBeenCalled();
+    expect(storage.applySessionPlan).not.toHaveBeenCalled();
   });
 });

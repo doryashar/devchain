@@ -53,6 +53,7 @@ jest.mock('../provider-launch-config', () => ({
 // ── Imports ────────────────────────────────────────────────────────────
 
 import { createLaunchPipelineHarness } from './__test-utils__/pipeline-harness';
+import { resolve as resolveLaunchConfig } from '../provider-launch-config';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -178,6 +179,83 @@ describe('SessionLaunchPipeline', () => {
         expect.any(String),
         { normalizeCapturedLineEndings: true },
       );
+    });
+  });
+
+  // Per-provider alternate-screen policy — launch matrix.
+  // The pipeline reads `adapter.terminalOutputBehavior?.usesAlternateScreen` and
+  // forwards it to tmux via `setAlternateScreen(target, <bool>)`. This is GATE 1
+  // of the two-gate invariant; GATE 2 (the PTY strip) reads the SAME adapter
+  // field via sessionsService.usesAlternateScreenFor (see sessions.service.spec.ts).
+  // Layer: pipeline unit test with the shared harness — cheapest layer that
+  // proves the pipeline honors the adapter flag end-to-end through to tmux.
+  describe('per-provider alternate-screen policy (launch matrix)', () => {
+    const noRunningSelect = (sql: string) => {
+      if (sql.includes('SELECT') && sql.includes("status = 'running'")) {
+        return {
+          run: jest.fn(),
+          get: jest.fn().mockReturnValue(undefined),
+          all: jest.fn().mockReturnValue([]),
+        };
+      }
+      return { run: jest.fn().mockReturnValue({ changes: 1 }), get: jest.fn(), all: jest.fn() };
+    };
+
+    it('enables alternate-screen for a full-screen TUI adapter (usesAlternateScreen: true)', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+      (
+        mocks.adapter as { terminalOutputBehavior?: { usesAlternateScreen: boolean } }
+      ).terminalOutputBehavior = { usesAlternateScreen: true };
+      mocks.sqliteMock.prepare.mockImplementation(noRunningSelect);
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      // setAlternateScreen called exactly once, with enabled=true (tmux alternate-screen on)
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledTimes(1);
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        true,
+      );
+    });
+
+    it('suppresses alternate-screen by default (adapter has no terminalOutputBehavior)', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+      // Default mock adapter has NO terminalOutputBehavior → usesAlternateScreen defaults to false
+      mocks.sqliteMock.prepare.mockImplementation(noRunningSelect);
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledTimes(1);
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        false,
+      );
+    });
+
+    it('suppresses alternate-screen when the adapter explicitly opts out (usesAlternateScreen: false)', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+      (
+        mocks.adapter as { terminalOutputBehavior?: { usesAlternateScreen: boolean } }
+      ).terminalOutputBehavior = { usesAlternateScreen: false };
+      mocks.sqliteMock.prepare.mockImplementation(noRunningSelect);
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        false,
+      );
+    });
+
+    it('sets alternate-screen AFTER creating the tmux session (ordering — window option needs a target)', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+      mocks.sqliteMock.prepare.mockImplementation(noRunningSelect);
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      const createOrder = mocks.terminalIO.createEmptySession.mock.invocationCallOrder[0];
+      const altOrder = mocks.terminalIO.setAlternateScreen.mock.invocationCallOrder[0];
+      expect(altOrder).toBeGreaterThan(createOrder);
     });
   });
 
@@ -458,6 +536,57 @@ describe('SessionLaunchPipeline', () => {
       expect(deliveredText).toContain('agent=test-agent');
       expect(deliveredText).toContain('project=TestProject');
       expect(deliveredText).toMatch(/session_short=[a-f0-9]{8}/);
+    });
+  });
+
+  describe('provider env scope filtering', () => {
+    it('calls getProviderEnvForProject with provider.id and projectId', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+
+      mocks.sqliteMock.prepare.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT') && sql.includes("status = 'running'")) {
+          return {
+            run: jest.fn(),
+            get: jest.fn().mockReturnValue(undefined),
+            all: jest.fn().mockReturnValue([]),
+          };
+        }
+        return { run: jest.fn().mockReturnValue({ changes: 1 }), get: jest.fn(), all: jest.fn() };
+      });
+
+      mocks.storage.getProviderEnvForProject.mockReturnValue({ FILTERED_KEY: 'filtered-value' });
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      expect(mocks.storage.getProviderEnvForProject).toHaveBeenCalledWith(
+        'provider-1',
+        'project-1',
+      );
+    });
+
+    it('passes filtered env to resolveLaunchConfig instead of raw provider.env', async () => {
+      const { pipeline, mocks } = createLaunchPipelineHarness();
+      const resolveMock = resolveLaunchConfig as jest.Mock;
+
+      mocks.sqliteMock.prepare.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT') && sql.includes("status = 'running'")) {
+          return {
+            run: jest.fn(),
+            get: jest.fn().mockReturnValue(undefined),
+            all: jest.fn().mockReturnValue([]),
+          };
+        }
+        return { run: jest.fn().mockReturnValue({ changes: 1 }), get: jest.fn(), all: jest.fn() };
+      });
+
+      const filteredEnv = { SCOPED_KEY: 'scoped-value' };
+      mocks.storage.getProviderEnvForProject.mockReturnValue(filteredEnv);
+
+      await runWithTimers(() => pipeline.launch(launchDto));
+
+      expect(resolveMock).toHaveBeenCalledWith(
+        expect.objectContaining({ providerEnv: filteredEnv }),
+      );
     });
   });
 });

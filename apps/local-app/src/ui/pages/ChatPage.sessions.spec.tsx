@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { TerminalWindowsProvider } from '@/ui/terminal-windows';
@@ -270,7 +270,7 @@ describe('ChatPage agent grouping toggle', () => {
     await waitFor(() => expect(teamsTab).toHaveAttribute('data-state', 'active'));
     expect(screen.getByText(/No teams configured/i)).toBeInTheDocument();
     expect(window.localStorage.getItem(LS_KEY)).toBe('teams');
-    expect(screen.getByText('No Team')).toBeInTheDocument();
+    expect(screen.getByText('STANDALONE')).toBeInTheDocument();
     expect(screen.getByLabelText(/Chat with Alpha \(offline\)/i)).toBeInTheDocument();
   });
 
@@ -283,7 +283,7 @@ describe('ChatPage agent grouping toggle', () => {
       expect(screen.getByRole('tab', { name: 'Teams' })).toHaveAttribute('data-state', 'active'),
     );
     expect(await screen.findByText(/No teams configured/i)).toBeInTheDocument();
-    expect(screen.getByText('No Team')).toBeInTheDocument();
+    expect(screen.getByText('STANDALONE')).toBeInTheDocument();
     expect(screen.getByLabelText(/Chat with Alpha \(offline\)/i)).toBeInTheDocument();
   });
 });
@@ -1714,25 +1714,32 @@ describe('ChatPage worktree provider config context menu', () => {
     });
     renderWithClient(<ChatPage />);
 
+    // The agent name and the config/override label render as two separate
+    // elements (a name span + a styled secondary label chip), so assert each
+    // part independently rather than the old inline "Name (label)" string.
     const mainOverrideButton = await screen.findByLabelText(
       /Chat with Main Override Agent \(online\)/i,
     );
-    expect(mainOverrideButton).toHaveTextContent('Main Override Agent (glm-5)');
+    expect(within(mainOverrideButton).getByText('Main Override Agent')).toBeInTheDocument();
+    expect(within(mainOverrideButton).getByText('glm-5')).toBeInTheDocument();
 
     const mainDefaultButton = await screen.findByLabelText(
       /Chat with Main Default Agent \(online\)/i,
     );
-    expect(mainDefaultButton).toHaveTextContent('Main Default Agent (Main Config Default)');
+    expect(within(mainDefaultButton).getByText('Main Default Agent')).toBeInTheDocument();
+    expect(within(mainDefaultButton).getByText('Main Config Default')).toBeInTheDocument();
 
     const worktreeOverrideButton = await screen.findByLabelText(
       /Open terminal for Worktree Override Agent in feature-auth \(online\)/i,
     );
-    expect(worktreeOverrideButton).toHaveTextContent('Worktree Override Agent (claude-sonnet-4-5)');
+    expect(within(worktreeOverrideButton).getByText('Worktree Override Agent')).toBeInTheDocument();
+    expect(within(worktreeOverrideButton).getByText('claude-sonnet-4-5')).toBeInTheDocument();
 
     const worktreeDefaultButton = await screen.findByLabelText(
       /Open terminal for Worktree Default Agent in feature-auth \(online\)/i,
     );
-    expect(worktreeDefaultButton).toHaveTextContent('Worktree Default Agent (WT Config Default)');
+    expect(within(worktreeDefaultButton).getByText('Worktree Default Agent')).toBeInTheDocument();
+    expect(within(worktreeDefaultButton).getByText('WT Config Default')).toBeInTheDocument();
   });
 
   it('fetches provider configs from worktree proxy and triggers proxied PUT on selection', async () => {

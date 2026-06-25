@@ -1,9 +1,19 @@
 /**
- * Static catalog of all known WebSocket topic/type combinations and their
- * expected client-side reaction kind. Used by the contract test to verify
- * every server-side broadcastRegistry entry has a declared client-side handler.
+ * Catalog of web-client-reacted *direct* (non-registry) broadcasts.
  *
- * Each entry declares: topic pattern, type, kind, and the hook that owns it.
+ * Registry-driven broadcasts (EventEmitter2 → CatalogBroadcaster) no longer live
+ * here: their client-reaction contract is co-located on each `broadcast-registry.ts`
+ * entry via `clientReaction`, and the compiler now forces it (see the alignment
+ * spec, which derives registry coverage from the registry itself).
+ *
+ * This list mirrors ONLY the direct broadcasts (emitted outside the registry's
+ * projectBroadcast path) that the web client already reacts to. It is **NOT** an
+ * exhaustive inventory of every websocket frame the gateways emit — terminal/MCP/
+ * session frames were never tracked here and stay out (e.g. `terminal.gateway.ts`
+ * around L550-552). `chat/{id}` is intentionally absent: `chat.message.created` /
+ * `.read` are registry entries (`broadcast-registry.ts`) and are derived from there.
+ *
+ * Each entry declares: topic pattern, type, kind, and the hook/component that owns it.
  */
 export interface RegistryCatalogEntry {
   topicPattern: string;
@@ -12,167 +22,7 @@ export interface RegistryCatalogEntry {
   owner: string;
 }
 
-export const realtimeRegistryCatalog: RegistryCatalogEntry[] = [
-  // ── Activity ──
-  { topicPattern: 'session/{id}', type: 'activity', kind: 'invalidate', owner: 'useChatSocket' },
-
-  // ── Chat ──
-  {
-    topicPattern: 'chat/{id}',
-    type: 'message.created',
-    kind: 'custom-handler',
-    owner: 'useChatSocket',
-  },
-  { topicPattern: 'chat/{id}', type: 'message.read', kind: 'no-op', owner: 'global' },
-
-  // ── Epics ──
-  {
-    topicPattern: 'project/{id}/epics',
-    type: 'created',
-    kind: 'invalidate',
-    owner: 'useBoardSync',
-  },
-  {
-    topicPattern: 'project/{id}/epics',
-    type: 'deleted',
-    kind: 'invalidate',
-    owner: 'useBoardSync',
-  },
-  {
-    topicPattern: 'project/{id}/epics',
-    type: 'updated',
-    kind: 'invalidate',
-    owner: 'useBoardSync',
-  },
-  {
-    topicPattern: 'project/{id}/epics',
-    type: 'comment.created',
-    kind: 'invalidate',
-    owner: 'useBoardSync',
-  },
-
-  // ── Project state ──
-  {
-    topicPattern: 'project/{id}/state',
-    type: 'agent.created',
-    kind: 'invalidate',
-    owner: 'useChatSocket',
-  },
-  {
-    topicPattern: 'project/{id}/state',
-    type: 'agent.deleted',
-    kind: 'invalidate',
-    owner: 'useChatSocket',
-  },
-  {
-    topicPattern: 'project/{id}/state',
-    type: 'team.member.added',
-    kind: 'invalidate',
-    owner: 'useChatSocket',
-  },
-  {
-    topicPattern: 'project/{id}/state',
-    type: 'team.member.removed',
-    kind: 'invalidate',
-    owner: 'useChatSocket',
-  },
-  {
-    topicPattern: 'project/{id}/state',
-    type: 'team.config.updated',
-    kind: 'invalidate',
-    owner: 'useChatSocket',
-  },
-
-  // ── Reviews (review-scoped) ──
-  {
-    topicPattern: 'review/{id}',
-    type: 'comment.created',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'review/{id}',
-    type: 'comment.resolved',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'review/{id}',
-    type: 'review.updated',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'review/{id}',
-    type: 'comment.updated',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'review/{id}',
-    type: 'comment.deleted',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-
-  // ── Reviews (project-scoped) ──
-  {
-    topicPattern: 'project/{id}/reviews',
-    type: 'comment.created',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'project/{id}/reviews',
-    type: 'comment.resolved',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'project/{id}/reviews',
-    type: 'review.updated',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'project/{id}/reviews',
-    type: 'comment.updated',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-  {
-    topicPattern: 'project/{id}/reviews',
-    type: 'comment.deleted',
-    kind: 'invalidate',
-    owner: 'useReviewSubscription',
-  },
-
-  // ── Transcript ──
-  {
-    topicPattern: 'session/{id}/transcript',
-    type: 'discovered',
-    kind: 'custom-handler',
-    owner: 'useSessionTranscript',
-  },
-  {
-    topicPattern: 'session/{id}/transcript',
-    type: 'updated',
-    kind: 'custom-handler',
-    owner: 'useSessionTranscript',
-  },
-  {
-    topicPattern: 'session/{id}/transcript',
-    type: 'ended',
-    kind: 'custom-handler',
-    owner: 'useSessionTranscript',
-  },
-
-  // ── Worktree ──
-  { topicPattern: 'worktrees', type: 'changed', kind: 'invalidate', owner: 'useWorktreeTab' },
-
-  // ── Presence ──
-  { topicPattern: 'agent/{id}', type: 'presence', kind: 'invalidate', owner: 'useChatSocket' },
-
+export const nonRegistryBroadcastCatalog: RegistryCatalogEntry[] = [
   // ── Cloud ──
   { topicPattern: 'cloud', type: 'connected', kind: 'invalidate', owner: 'useCloudConnection' },
   { topicPattern: 'cloud', type: 'disconnected', kind: 'invalidate', owner: 'useCloudConnection' },
@@ -227,11 +77,5 @@ export const realtimeRegistryCatalog: RegistryCatalogEntry[] = [
   },
 
   // ── System ──
-  {
-    topicPattern: 'system',
-    type: 'session_recommendation',
-    kind: 'custom-handler',
-    owner: 'Layout',
-  },
   { topicPattern: 'system', type: 'ping', kind: 'custom-handler', owner: 'socket.ts' },
 ];

@@ -170,6 +170,10 @@ describe('Layout nav-item active state', () => {
   it('does not mark Cloud nav item active when on /cloud?section=notifications', async () => {
     renderLayout('/cloud?section=notifications');
 
+    // Cloud lives in the collapsible System section, which no longer auto-expands.
+    // Expand it manually to inspect the Cloud link's active state.
+    fireEvent.click(screen.getByRole('button', { name: /^system/i }));
+
     await waitFor(() => {
       // Cloud nav item has title="Cloud" — match by title since label alone is ambiguous
       const cloudLink = screen
@@ -182,6 +186,9 @@ describe('Layout nav-item active state', () => {
 
   it('marks Cloud nav item active when on /cloud (no section)', async () => {
     renderLayout('/cloud');
+
+    // System section no longer auto-expands; expand it manually to reach the Cloud link.
+    fireEvent.click(screen.getByRole('button', { name: /^system/i }));
 
     await waitFor(() => {
       const cloudLink = screen

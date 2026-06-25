@@ -1,9 +1,5 @@
-import {
-  BadRequestException,
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { ForbiddenError, NotFoundError } from '../../../common/errors/error-types';
 import { SessionsController } from './sessions.controller';
 import type { SessionsService } from '../services/sessions.service';
 import type { SessionRuntime } from '../services/session-runtime';
@@ -347,8 +343,7 @@ describe('SessionsController', () => {
     };
 
     it('returns updated session with new name', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(mockSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: VALID_PROJECT_ID });
+      mockSessionsService.validateSessionInProject = jest.fn().mockResolvedValue(mockSession);
       const updated = { ...mockSession, name: 'My Session' };
       mockSessionsService.updateName = jest.fn().mockReturnValue(updated);
 
@@ -358,12 +353,15 @@ describe('SessionsController', () => {
       });
 
       expect(result.name).toBe('My Session');
+      expect(mockSessionsService.validateSessionInProject).toHaveBeenCalledWith(
+        VALID_SESSION_ID,
+        VALID_PROJECT_ID,
+      );
       expect(mockSessionsService.updateName).toHaveBeenCalledWith(VALID_SESSION_ID, 'My Session');
     });
 
     it('clears name when null is passed', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(mockSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: VALID_PROJECT_ID });
+      mockSessionsService.validateSessionInProject = jest.fn().mockResolvedValue(mockSession);
       const updated = { ...mockSession, name: null };
       mockSessionsService.updateName = jest.fn().mockReturnValue(updated);
 
@@ -375,27 +373,30 @@ describe('SessionsController', () => {
       expect(result.name).toBeNull();
     });
 
-    it('throws 404 when session not found', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(null);
+    it('throws 404 when session not found (shared guard)', async () => {
+      mockSessionsService.validateSessionInProject = jest
+        .fn()
+        .mockRejectedValue(new NotFoundError('Session', VALID_SESSION_ID));
 
       await expect(
         controller.renameSession(VALID_SESSION_ID, {
           projectId: VALID_PROJECT_ID,
           name: 'Test',
         }),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(NotFoundError);
     });
 
-    it('throws 403 on project mismatch', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(mockSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: 'different-project-id' });
+    it('throws Forbidden on project mismatch (shared guard)', async () => {
+      mockSessionsService.validateSessionInProject = jest
+        .fn()
+        .mockRejectedValue(new ForbiddenError('PROJECT_MISMATCH'));
 
       await expect(
         controller.renameSession(VALID_SESSION_ID, {
           projectId: VALID_PROJECT_ID,
           name: 'Test',
         }),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(ForbiddenError);
     });
 
     it('throws 400 on invalid body', async () => {
@@ -426,41 +427,50 @@ describe('SessionsController', () => {
     };
 
     it('deletes a stopped session record', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(mockStoppedSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: VALID_PROJECT_ID });
+      mockSessionsService.validateSessionInProject = jest
+        .fn()
+        .mockResolvedValue(mockStoppedSession);
       mockSessionsService.hardDeleteRecord = jest.fn().mockReturnValue({ deleted: true });
 
       const result = await controller.deleteSessionRecord(VALID_SESSION_ID, VALID_PROJECT_ID);
 
       expect(result).toEqual({ deleted: true });
+      expect(mockSessionsService.validateSessionInProject).toHaveBeenCalledWith(
+        VALID_SESSION_ID,
+        VALID_PROJECT_ID,
+      );
       expect(mockSessionsService.hardDeleteRecord).toHaveBeenCalledWith(VALID_SESSION_ID);
     });
 
     it('throws 409 when session is running', async () => {
       const runningSession = { ...mockStoppedSession, status: 'running' as const };
-      mockSessionsService.getSession = jest.fn().mockReturnValue(runningSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: VALID_PROJECT_ID });
+      mockSessionsService.validateSessionInProject = jest.fn().mockResolvedValue(runningSession);
+      mockSessionsService.hardDeleteRecord = jest.fn();
 
       await expect(
         controller.deleteSessionRecord(VALID_SESSION_ID, VALID_PROJECT_ID),
       ).rejects.toThrow(ConflictException);
+      expect(mockSessionsService.hardDeleteRecord).not.toHaveBeenCalled();
     });
 
-    it('throws 404 when session not found', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(null);
+    it('throws 404 when session not found (shared guard)', async () => {
+      mockSessionsService.validateSessionInProject = jest
+        .fn()
+        .mockRejectedValue(new NotFoundError('Session', VALID_SESSION_ID));
 
       await expect(
         controller.deleteSessionRecord(VALID_SESSION_ID, VALID_PROJECT_ID),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(NotFoundError);
     });
 
-    it('throws 403 on project mismatch', async () => {
-      mockSessionsService.getSession = jest.fn().mockReturnValue(mockStoppedSession);
-      mockStorage.getAgent.mockResolvedValue({ projectId: 'different-project-id' });
+    it('throws Forbidden on project mismatch (shared guard)', async () => {
+      mockSessionsService.validateSessionInProject = jest
+        .fn()
+        .mockRejectedValue(new ForbiddenError('PROJECT_MISMATCH'));
 
       await expect(
         controller.deleteSessionRecord(VALID_SESSION_ID, VALID_PROJECT_ID),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(ForbiddenError);
     });
 
     it('throws 400 when projectId is missing', async () => {

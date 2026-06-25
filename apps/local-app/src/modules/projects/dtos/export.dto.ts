@@ -37,6 +37,7 @@ export const ManifestOverrideSchema = z
       .string()
       .regex(SEMVER_PATTERN, VALIDATION_MESSAGES.INVALID_VERSION)
       .optional(),
+    order: z.number().int().optional(),
   })
   .strict();
 

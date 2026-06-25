@@ -44,7 +44,7 @@ function makeMessage(
   timestampMs = 1706000000000,
   overrides: Partial<UnifiedMessage> = {},
 ): UnifiedMessage {
-  return {
+  const msg: UnifiedMessage = {
     id,
     parentId: null,
     role: 'assistant',
@@ -56,6 +56,13 @@ function makeMessage(
     isSidechain: false,
     ...overrides,
   };
+  // Default a synthetic assistant to a COMPLETED turn so generic consecutive-assistant
+  // appends stay distinct messages (the cache-boundary continuation fold only coalesces a
+  // tail whose stopReason !== 'end_turn'). Boundary-fold tests override this with 'tool_use'.
+  if (msg.role === 'assistant' && msg.stopReason === undefined) {
+    msg.stopReason = 'end_turn';
+  }
+  return msg;
 }
 
 function makeSession(overrides: Partial<UnifiedSession> = {}): UnifiedSession {
@@ -305,6 +312,255 @@ describe('SessionCacheService', () => {
     expect(second.metrics.cacheReadTokens).toBe(35);
     expect(second.metrics.totalTokens).toBe(250);
     expect(second.messages).toHaveLength(4);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cache-boundary tool_result fold (Remediation 9)
+  // -------------------------------------------------------------------------
+
+  /** An assistant tail PAUSED on a tool_use (stopReason 'tool_use'), awaiting continuation. */
+  function makeToolUseTail(overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
+    return makeMessage('a-tool', 1706000005000, {
+      role: 'assistant',
+      content: [{ type: 'tool_call', toolCallId: 'tool-1', toolName: 'Bash', input: {} }],
+      toolCalls: [{ id: 'tool-1', name: 'Bash', input: {}, isTask: false }],
+      stopReason: 'tool_use',
+      ...overrides,
+    });
+  }
+
+  /** A continuation assistant (the resumed turn) arriving in a later slice. */
+  function makeContinuationAssistant(overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
+    return makeMessage('a-cont', 1706000012000, {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'continuing the answer' }],
+      stopReason: 'end_turn',
+      usage: { input: 30, output: 15, cacheRead: 0, cacheCreation: 0 },
+      ...overrides,
+    });
+  }
+
+  /** A standalone tool-result-only user(meta) entry (the leading message of a later slice). */
+  function makeToolResultEntry(overrides: Partial<UnifiedMessage> = {}): UnifiedMessage {
+    return makeMessage('u-toolresult', 1706000010000, {
+      role: 'user',
+      isMeta: true,
+      content: [{ type: 'tool_result', toolCallId: 'tool-1', content: 'ok', isError: false }],
+      toolResults: [{ toolCallId: 'tool-1', content: 'ok', isError: false }],
+      ...overrides,
+    });
+  }
+
+  function seedSession(tail: UnifiedMessage): UnifiedSession {
+    return makeSession({
+      messages: [
+        makeMessage('u-1', 1706000000000, {
+          role: 'user',
+          content: [{ type: 'text', text: 'do a thing' }],
+        }),
+        tail,
+      ],
+      metrics: makeMetrics({ messageCount: 2 }),
+    });
+  }
+
+  it('folds a leading tool_result-only slice onto the cached tail assistant (count parity at the boundary)', async () => {
+    const tail = makeToolUseTail();
+    const session1 = seedSession(tail);
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(session1);
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    // Next slice begins with the tool_result whose tool_use was in the prior slice.
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 1,
+      entries: [makeToolResultEntry()],
+      metrics: makeMetrics({ messageCount: 1, inputTokens: 0, outputTokens: 0 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    expect(boundaryFold).toBe(true);
+    // Folded, not merged as a standalone message — count stays at the folded 2.
+    expect(session.messages).toHaveLength(2);
+    expect(session.metrics.messageCount).toBe(2);
+    expect(session.metrics.messageCount).toBe(session.messages.length);
+    // No standalone user-role tool_result remains.
+    expect(session.messages.some((m) => m.role === 'user' && m.toolResults.length > 0)).toBe(false);
+    // The cached tail assistant now carries the tool result (content block + toolResults).
+    const mergedTail = session.messages[1];
+    expect(mergedTail.role).toBe('assistant');
+    expect(mergedTail.toolResults).toHaveLength(1);
+    expect(mergedTail.toolResults[0].toolCallId).toBe('tool-1');
+    expect(mergedTail.content.some((b) => b.type === 'tool_result')).toBe(true);
+    // The ORIGINAL cached tail object is not mutated (the fold clones it).
+    expect(tail.toolResults).toHaveLength(0);
+    expect(tail.content.some((b) => b.type === 'tool_result')).toBe(false);
+  });
+
+  it('does NOT fold a sidechain tool_result onto a main-thread tail assistant (sidechain guard)', async () => {
+    const tail = makeToolUseTail({ isSidechain: false });
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(seedSession(tail));
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 1,
+      entries: [makeToolResultEntry({ isSidechain: true })],
+      metrics: makeMetrics({ messageCount: 1 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    expect(boundaryFold).toBe(false);
+    // Cross-thread fold is forbidden → the tool_result stays a standalone message.
+    expect(session.messages).toHaveLength(3);
+    expect(session.metrics.messageCount).toBe(3);
+    expect(session.metrics.messageCount).toBe(session.messages.length);
+  });
+
+  it('Case A: folds a leading [tool_result, continuation assistant] run onto the cached tail (count unchanged)', async () => {
+    const tail = makeToolUseTail();
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(seedSession(tail));
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    // Slice: the tool_result THEN the resumed assistant — both belong to the tail's turn.
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 2,
+      entries: [makeToolResultEntry(), makeContinuationAssistant({ id: 'a-final' })],
+      metrics: makeMetrics({ messageCount: 2 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    // The whole run folds onto the tail → zero net new messages → in-place tail replacement.
+    expect(boundaryFold).toBe(true);
+    expect(session.messages).toHaveLength(2);
+    expect(session.metrics.messageCount).toBe(2);
+    expect(session.metrics.messageCount).toBe(session.messages.length);
+    const mergedTail = session.messages[1];
+    expect(mergedTail.toolResults).toHaveLength(1); // tool_result folded
+    expect(mergedTail.content.some((b) => b.type === 'tool_result')).toBe(true);
+    // The continuation text + its usage are merged onto the tail.
+    expect(
+      mergedTail.content.some((b) => b.type === 'text' && b.text === 'continuing the answer'),
+    ).toBe(true);
+    expect(mergedTail.stopReason).toBe('end_turn'); // advanced to the continuation's completion
+    expect(session.messages.some((m) => m.role === 'user' && m.toolResults.length > 0)).toBe(false);
+  });
+
+  it('Case B: folds a slice that begins DIRECTLY with the continuation assistant (no leading tool_result)', async () => {
+    const tail = makeToolUseTail();
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(seedSession(tail));
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    // The tool_result was consumed in the PRIOR slice; this slice starts with the resumed
+    // assistant alone — the parser has no fold target so it arrives standalone.
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 1,
+      entries: [makeContinuationAssistant()],
+      metrics: makeMetrics({ messageCount: 1 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    expect(boundaryFold).toBe(true);
+    expect(session.messages).toHaveLength(2); // continuation merged, not appended
+    expect(session.metrics.messageCount).toBe(2);
+    expect(session.metrics.messageCount).toBe(session.messages.length);
+    const mergedTail = session.messages[1];
+    expect(
+      mergedTail.content.some((b) => b.type === 'text' && b.text === 'continuing the answer'),
+    ).toBe(true);
+    // Usage summed onto the tail so per-chunk token metrics don't undercount the merged turn.
+    expect(mergedTail.usage?.input).toBe(30);
+    // The ORIGINAL cached tail object is not mutated (clone).
+    expect(tail.content.some((b) => b.type === 'text')).toBe(false);
+  });
+
+  it('over-merge guard: a continuation assistant does NOT fold onto a tail that already end_turn-ed', async () => {
+    // A completed turn (stopReason end_turn) followed by another assistant with no user
+    // between is a NEW turn (retry/continuation), not a tool continuation — must stay separate.
+    const tail = makeToolUseTail({ stopReason: 'end_turn' });
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(seedSession(tail));
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 1,
+      entries: [makeContinuationAssistant()],
+      metrics: makeMetrics({ messageCount: 1 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    expect(boundaryFold).toBe(false);
+    expect(session.messages).toHaveLength(3); // appended as a new turn
+    expect(session.metrics.messageCount).toBe(3);
+    expect(session.metrics.messageCount).toBe(session.messages.length);
+  });
+
+  it('over-merge guard: a real user prompt leading the slice stops the run (new turn, no fold)', async () => {
+    const tail = makeToolUseTail();
+    (adapter.parseFullSession as jest.Mock).mockResolvedValue(seedSession(tail));
+    await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+    mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+    const userPrompt = makeMessage('u-2', 1706000011000, {
+      role: 'user',
+      content: [{ type: 'text', text: 'another question' }],
+    });
+    (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+      hasMore: false,
+      nextByteOffset: 1500,
+      messageCount: 2,
+      entries: [userPrompt, makeContinuationAssistant()],
+      metrics: makeMetrics({ messageCount: 2 }),
+    } satisfies IncrementalResult);
+
+    const { session, boundaryFold } = await service.getOrParseWithMeta(
+      SESSION_ID,
+      FILE_PATH,
+      adapter,
+    );
+
+    // The user prompt breaks the run immediately → nothing folds; both append.
+    expect(boundaryFold).toBe(false);
+    expect(session.messages).toHaveLength(4);
+    expect(session.metrics.messageCount).toBe(4);
+    expect(session.messages.map((m) => m.id)).toEqual(['u-1', 'a-tool', 'u-2', 'a-cont']);
   });
 
   it('should replace messages and metrics in snapshot incremental mode', async () => {
@@ -1026,6 +1282,188 @@ describe('SessionCacheService', () => {
   // -------------------------------------------------------------------------
   // getEntry
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Source-ref + freshness abstraction (shared infra)
+  // -------------------------------------------------------------------------
+
+  describe('source-ref + freshness abstraction', () => {
+    it('should expose a numeric sourceVersion equal to file size', async () => {
+      mockedFsStat.mockResolvedValue(makeStat(4096, 1706000000000));
+      const result = await service.getOrParseWithMeta(SESSION_ID, FILE_PATH, adapter);
+      expect(result.sourceVersion).toBe(4096);
+      expect(service.getEntry(SESSION_ID)!.sourceVersion).toBe(4096);
+    });
+
+    it('should use adapter.getFreshnessToken for staleness when provided', async () => {
+      // Constant token → cache stays warm even when mtime/size change.
+      const getFreshnessToken = jest.fn().mockResolvedValue({ token: 'constant' });
+      adapter = makeAdapter({ getFreshnessToken });
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(makeSession());
+
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      // File grew AND mtime changed, but the opaque token is unchanged → cache hit.
+      mockedFsStat.mockResolvedValue(makeStat(9999, 1706000099999));
+      dateSpy.mockReturnValue(1706000060000); // within TTL
+
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      expect(adapter.parseFullSession).toHaveBeenCalledTimes(1);
+      expect(adapter.parseIncremental).not.toHaveBeenCalled();
+      expect(getFreshnessToken).toHaveBeenCalled();
+    });
+
+    it('should reparse when adapter.getFreshnessToken value changes', async () => {
+      const getFreshnessToken = jest
+        .fn()
+        .mockResolvedValueOnce({ v: 1 })
+        .mockResolvedValueOnce({ v: 2 });
+      adapter = makeAdapter({ getFreshnessToken });
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(makeSession());
+
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+      // Same size/mtime, but token changed → not a cache hit.
+      dateSpy.mockReturnValue(1706000060000);
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      expect(adapter.parseFullSession).toHaveBeenCalledTimes(2);
+    });
+
+    it('should thread a SessionSourceRef into parseFullSession', async () => {
+      const sourceRef = {
+        filePath: FILE_PATH,
+        providerName: 'claude',
+        providerSessionId: 'ses_123',
+        kind: 'file' as const,
+      };
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(makeSession());
+
+      await service.getOrParse(SESSION_ID, sourceRef, adapter);
+
+      expect(adapter.parseFullSession).toHaveBeenCalledWith(FILE_PATH, sourceRef);
+    });
+
+    it('should thread a SessionSourceRef into parseIncremental on append', async () => {
+      const sourceRef = {
+        filePath: FILE_PATH,
+        providerName: 'claude',
+        providerSessionId: 'ses_123',
+        kind: 'file' as const,
+      };
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(makeSession());
+      await service.getOrParse(SESSION_ID, sourceRef, adapter);
+
+      mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+      (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+        hasMore: false,
+        nextByteOffset: 1500,
+        messageCount: 1,
+        entries: [makeMessage('m3', 1706000010000)],
+        metrics: makeMetrics(),
+      } satisfies IncrementalResult);
+
+      await service.getOrParse(SESSION_ID, sourceRef, adapter);
+
+      expect(adapter.parseIncremental).toHaveBeenCalledWith(
+        FILE_PATH,
+        { byteOffset: 1000, includeToolCalls: true },
+        sourceRef,
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Central assistant-turn coalescing (the unified choke-point, Phase:1 Task:1)
+  // -------------------------------------------------------------------------
+  describe('central assistant-turn coalescing', () => {
+    it('deflates consecutive open (tool_use) assistants on the FULL-parse path + corrects messageCount', async () => {
+      // A provider whose parser did NOT coalesce: one user + two tool_use steps + a final
+      // assistant, all consecutive. The choke-point collapses them to [user, assistant].
+      const inflated = makeSession({
+        messages: [
+          makeMessage('u-1', 1706000000000, { role: 'user', stopReason: undefined }),
+          makeMessage('a-1', 1706000001000, { stopReason: 'tool_use' }),
+          makeMessage('a-2', 1706000002000, { stopReason: 'tool_use' }),
+          makeMessage('a-3', 1706000003000, { stopReason: 'end_turn' }),
+        ],
+        metrics: makeMetrics({ messageCount: 4 }),
+      });
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(inflated);
+
+      const result = await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+      expect(result.messages.map((m) => m.id)).toEqual(['u-1', 'a-1']);
+      expect(result.metrics.messageCount).toBe(2); // recomputed === messages.length
+      expect(result.metrics.messageCount).toBe(result.messages.length);
+    });
+
+    it('updates snapshotMetrics.messageCount on the SNAPSHOT incremental path', async () => {
+      adapter = makeAdapter({ providerName: 'opencode', incrementalMode: 'snapshot' });
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(
+        makeSession({
+          providerName: 'opencode',
+          messages: [makeMessage('m1')],
+          metrics: makeMetrics({ messageCount: 1 }),
+        }),
+      );
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      // Snapshot delta returns the FULL state with inflated consecutive tool_use steps and a
+      // raw (un-coalesced) messageCount of 4.
+      mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+      (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+        hasMore: false,
+        nextByteOffset: 1500,
+        entries: [
+          makeMessage('u-1', 1706000000000, { role: 'user', stopReason: undefined }),
+          makeMessage('a-1', 1706000001000, { stopReason: 'tool_use' }),
+          makeMessage('a-2', 1706000002000, { stopReason: 'tool_use' }),
+          makeMessage('a-3', 1706000003000, { stopReason: 'end_turn' }),
+        ],
+        metrics: makeMetrics({ messageCount: 4 }),
+      } satisfies IncrementalResult);
+
+      const result = await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      expect(result.messages.map((m) => m.id)).toEqual(['u-1', 'a-1']);
+      expect(result.metrics.messageCount).toBe(2); // snapshot count corrected at the choke-point
+    });
+
+    it('is a NO-OP on the DELTA path that the cache fold already coalesced (no double-merge)', async () => {
+      // Cached tail PAUSED on a tool_use; the next slice is its continuation. The cache fold
+      // merges it onto the tail; the central full-array pass must then change nothing.
+      const cachedSession = makeSession({
+        messages: [
+          makeMessage('u-1', 1706000000000, { role: 'user', stopReason: undefined }),
+          makeMessage('a-tool', 1706000001000, { stopReason: 'tool_use' }),
+        ],
+        metrics: makeMetrics({ messageCount: 2 }),
+      });
+      (adapter.parseFullSession as jest.Mock).mockResolvedValue(cachedSession);
+      await service.getOrParse(SESSION_ID, FILE_PATH, adapter);
+
+      mockedFsStat.mockResolvedValue(makeStat(1500, 1706000010000));
+      (adapter.parseIncremental as jest.Mock).mockResolvedValue({
+        hasMore: false,
+        nextByteOffset: 1500,
+        entries: [makeMessage('a-cont', 1706000002000, { stopReason: 'end_turn' })],
+      } satisfies IncrementalResult);
+
+      const { session, boundaryFold } = await service.getOrParseWithMeta(
+        SESSION_ID,
+        FILE_PATH,
+        adapter,
+      );
+
+      // The continuation folded onto the cached tail (one message, not two) — and the central
+      // pass left that result intact.
+      expect(session.messages.map((m) => m.id)).toEqual(['u-1', 'a-tool']);
+      expect(session.metrics.messageCount).toBe(2);
+      expect(boundaryFold).toBe(true);
+    });
+  });
 
   describe('getEntry', () => {
     it('should return undefined for unknown session', () => {

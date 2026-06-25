@@ -21,6 +21,8 @@ import { reviewCommentResolvedEvent } from './review.comment.resolved';
 import { reviewCommentDeletedEvent } from './review.comment.deleted';
 import { reviewCommentUpdatedEvent } from './review.comment.updated';
 import { claudeHooksSessionStartedEvent } from './claude.hooks.session.started';
+import { claudeHooksAskUserQuestionPendingEvent } from './claude.hooks.ask_user_question.pending';
+import { claudeHooksAskUserQuestionResolvedEvent } from './claude.hooks.ask_user_question.resolved';
 import { sessionTranscriptDiscoveredEvent } from './session.transcript.discovered';
 import { sessionProviderSessionIdDiscoveredEvent } from './session.provider-session-id.discovered';
 import { sessionTranscriptUpdatedEvent } from './session.transcript.updated';
@@ -68,6 +70,8 @@ export const eventCatalog = {
   [reviewCommentDeletedEvent.name]: reviewCommentDeletedEvent.schema,
   [reviewCommentUpdatedEvent.name]: reviewCommentUpdatedEvent.schema,
   [claudeHooksSessionStartedEvent.name]: claudeHooksSessionStartedEvent.schema,
+  [claudeHooksAskUserQuestionPendingEvent.name]: claudeHooksAskUserQuestionPendingEvent.schema,
+  [claudeHooksAskUserQuestionResolvedEvent.name]: claudeHooksAskUserQuestionResolvedEvent.schema,
   [sessionTranscriptDiscoveredEvent.name]: sessionTranscriptDiscoveredEvent.schema,
   [sessionProviderSessionIdDiscoveredEvent.name]: sessionProviderSessionIdDiscoveredEvent.schema,
   [sessionTranscriptUpdatedEvent.name]: sessionTranscriptUpdatedEvent.schema,

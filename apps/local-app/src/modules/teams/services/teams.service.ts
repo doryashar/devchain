@@ -4,6 +4,7 @@ import {
   ValidationError,
   NotFoundError,
   ConflictError,
+  ForbiddenError,
   TeamMemberCapReachedError,
 } from '../../../common/errors/error-types';
 import { SessionsService } from '../../sessions/services/sessions.service';
@@ -12,9 +13,16 @@ import {
   type StorageService,
   type ListResult,
 } from '../../storage/interfaces/storage.interface';
-import type { Team, TeamMember, CreateTeam, UpdateTeam } from '../../storage/models/domain.models';
+import type {
+  Agent,
+  Team,
+  TeamMember,
+  CreateTeam,
+  UpdateTeam,
+} from '../../storage/models/domain.models';
 import { TeamsStore, type TeamsListOptions } from '../storage/teams.store';
 import { EventsService } from '../../events/services/events.service';
+import { SettingsService } from '../../settings/services/settings.service';
 import { createLogger } from '../../../common/logging/logger';
 import type { RecipientContext } from '../dtos/recipient-context.dto';
 
@@ -33,6 +41,7 @@ export class TeamsService {
     private readonly teamsStore: TeamsStore,
     @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
     private readonly moduleRef: ModuleRef,
+    private readonly settingsService: SettingsService,
     @Optional() private readonly eventsService?: EventsService,
   ) {}
 
@@ -140,6 +149,36 @@ export class TeamsService {
     return this.teamsStore.getTeam(id);
   }
 
+  /**
+   * Module-boundary facade for the cloud-tunnel `chat.listProfiles` RPC (the tunnel module
+   * imports `TeamsService`, never `TeamsStore`). Returns the profile ids LINKED to `teamId`,
+   * after asserting the team belongs to `projectId` so a caller cannot enumerate another
+   * project's team profiles by id.
+   */
+  async listLinkedProfileIdsForTeam(projectId: string, teamId: string): Promise<string[]> {
+    const team = await this.teamsStore.getTeam(teamId);
+    if (!team) {
+      throw new NotFoundError('Team', teamId);
+    }
+    if (team.projectId !== projectId) {
+      throw new ForbiddenError('Team does not belong to the requested project', {
+        code: 'TEAM_PROJECT_MISMATCH',
+        teamId,
+        projectId,
+      });
+    }
+    return this.teamsStore.listProfilesForTeam(teamId);
+  }
+
+  /**
+   * Module-boundary facade for the cloud-tunnel `chat.listProfiles` RPC with no team selected:
+   * the "standalone" set — profile ids in `projectId` NOT linked to any of its teams. Project
+   * scoping is intrinsic (the query filters by `projectId`).
+   */
+  async listUnlinkedProfileIds(projectId: string): Promise<string[]> {
+    return this.teamsStore.listProfilesNotLinkedToAnyTeam(projectId);
+  }
+
   async listTeams(
     projectId: string,
     options?: TeamsListOptions,
@@ -165,6 +204,31 @@ export class TeamsService {
 
   async findTeamByExactName(projectId: string, name: string): Promise<Team | null> {
     return this.teamsStore.findTeamByExactName(projectId, name.trim());
+  }
+
+  /**
+   * Batched read for mobile team grouping (`chat.listTeams`): every team in the
+   * project (in `listTeams` order) with its ordered member agent IDs, via a
+   * single batched `teamMembers` query (no N+1). Delegates to
+   * `TeamsStore.listTeamsWithMembers`; returns the minimal shape the mobile
+   * client needs (id / name / lead / memberAgentIds). `memberCount` is derived
+   * by the caller from `memberAgentIds.length`.
+   */
+  async listTeamsWithMemberIds(projectId: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      teamLeadAgentId: string | null;
+      memberAgentIds: string[];
+    }>
+  > {
+    const rows = await this.teamsStore.listTeamsWithMembers(projectId);
+    return rows.map(({ team, memberAgentIds }) => ({
+      id: team.id,
+      name: team.name,
+      teamLeadAgentId: team.teamLeadAgentId,
+      memberAgentIds,
+    }));
   }
 
   async updateTeam(id: string, data: UpdateTeam): Promise<Team> {
@@ -897,7 +961,27 @@ export class TeamsService {
       throw error;
     }
 
-    // 7. Publish events (best-effort)
+    // 7. Cleanup presets
+    try {
+      await this.settingsService.removeAgentFromProjectPresets(
+        input.projectId,
+        preDeleteData.removedAgentName,
+      );
+    } catch (error) {
+      logger.error(
+        {
+          agentId: preDeleteData.removedAgentId,
+          projectId: input.projectId,
+          agentName: preDeleteData.removedAgentName,
+          teamId: preDeleteData.teamId,
+          error,
+        },
+        'Failed to remove agent from project presets after team-agent deletion',
+      );
+      throw error;
+    }
+
+    // 8. Publish events (best-effort)
     try {
       const eventNames = await this.resolveTeamEventNames(
         input.projectId,
@@ -946,6 +1030,247 @@ export class TeamsService {
         teamName: team.name,
       },
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mobile chat-tunnel agent create/delete facades (MobileAddAgent T2).
+  // The cloud-tunnel module composes these via TeamsService (never TeamsStore),
+  // so the team-domain validation + event enrichment stay in one place.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * `chat.createTeamAgent` facade: resolve the team (assert it belongs to `projectId`, reject a
+   * lead-less team), then delegate to {@link createTeamAgentForRest} with the team's own lead as
+   * the actor (DEC-2: human-initiated, NOT gated on `allowTeamLeadCreateAgents`, mirroring REST).
+   * `createTeamAgentForRest` validates profile-linked-to-team + per-project name-uniqueness, and
+   * creates atomically under the member cap (emitting `agent.created` + `team.member.added`).
+   */
+  async createTeamAgentForChat(input: {
+    projectId: string;
+    teamId: string;
+    name: string;
+    providerConfigId: string;
+    description?: string;
+  }): Promise<Agent> {
+    const team = await this.teamsStore.getTeam(input.teamId);
+    if (!team) {
+      throw new NotFoundError('Team', input.teamId);
+    }
+    if (team.projectId !== input.projectId) {
+      throw new ForbiddenError('Team does not belong to the requested project', {
+        code: 'TEAM_PROJECT_MISMATCH',
+        teamId: input.teamId,
+        projectId: input.projectId,
+      });
+    }
+    if (team.teamLeadAgentId === null) {
+      throw new ValidationError('Team has no lead');
+    }
+    return this.createTeamAgentForRest({
+      actorLeadAgentId: team.teamLeadAgentId,
+      projectId: input.projectId,
+      teamId: input.teamId,
+      providerConfigId: input.providerConfigId,
+      name: input.name,
+      description: input.description,
+    });
+  }
+
+  /**
+   * `chat.createIndependentAgent` facade: create a standalone (team-less) agent. Validates
+   * provider-config ownership + profile project scoping (mirror agents.controller), then applies
+   * a NEW case-insensitive per-project name-uniqueness guard.
+   *
+   * NEW BEHAVIOR (not a mirror): the REST `POST /api/agents` path does NOT dedupe agent names
+   * (there is no DB unique index on `agents.name`), so this introduces an intentional
+   * desktop/mobile asymmetry — the mobile create path refuses a duplicate name for parity with
+   * the team-create path. The scan is non-atomic (pre-existing race, accepted for v1).
+   */
+  async createIndependentAgentForChat(input: {
+    projectId: string;
+    name: string;
+    profileId: string;
+    providerConfigId: string;
+    description?: string;
+  }): Promise<Agent> {
+    // Project-guard the selected profile FIRST — prove it belongs to this project
+    // before any config lookup, so config validation can never run against an
+    // out-of-project profile and a foreign profile id is never revealed.
+    const profile = await this.storage.getAgentProfile(input.profileId);
+    if (profile.projectId !== input.projectId) {
+      throw new ForbiddenError('Profile does not belong to the requested project', {
+        code: 'PROFILE_PROJECT_MISMATCH',
+        profileId: input.profileId,
+        projectId: input.projectId,
+      });
+    }
+
+    let config;
+    try {
+      config = await this.storage.getProfileProviderConfig(input.providerConfigId);
+    } catch (error) {
+      // Only the expected "config does not exist" becomes CONFIG_NOT_FOUND; never
+      // swallow an arbitrary storage failure as a not-found.
+      if (error instanceof NotFoundError) {
+        throw new ValidationError('Provider config not found', {
+          code: 'CONFIG_NOT_FOUND',
+          configId: input.providerConfigId,
+        });
+      }
+      throw error;
+    }
+    if (config.profileId !== input.profileId) {
+      // Reject without revealing the config's owning profile id — it may belong to
+      // another project's profile and must never be leaked to the client.
+      throw new ValidationError('Provider config does not belong to the selected profile', {
+        code: 'CONFIG_PROFILE_MISMATCH',
+        configId: input.providerConfigId,
+        expectedProfileId: input.profileId,
+      });
+    }
+
+    // NEW per-project name-uniqueness guard (replicates the team-create path).
+    const { items: existingAgents } = await this.storage.listAgents(input.projectId, {
+      limit: 10000,
+    });
+    const trimmedName = input.name.trim().toLowerCase();
+    if (existingAgents.some((a) => a.name.trim().toLowerCase() === trimmedName)) {
+      throw new ConflictError(`An agent named "${input.name}" already exists in this project`);
+    }
+
+    const effectiveDescription = input.description?.trim() || config.description?.trim() || '';
+    const agent = await this.storage.createAgent({
+      projectId: input.projectId,
+      profileId: input.profileId,
+      providerConfigId: input.providerConfigId,
+      name: input.name,
+      description: effectiveDescription,
+    });
+
+    try {
+      await this.eventsService?.publish('agent.created', {
+        agentId: agent.id,
+        agentName: agent.name,
+        projectId: input.projectId,
+        profileId: input.profileId,
+        providerConfigId: input.providerConfigId,
+        actor: null,
+      });
+    } catch (error) {
+      logger.error(
+        { agentId: agent.id, projectId: input.projectId, error },
+        'Failed to publish agent.created event',
+      );
+    }
+
+    return agent;
+  }
+
+  /**
+   * `chat.deleteAgent` facade — the explicit non-lead delete contract (NOT routed through
+   * {@link deleteTeamAgent}; different actor model). The caller has already asserted the agent
+   * belongs to `projectId`.
+   *
+   * 1. ALL-TEAMS lead guard: reject (`AGENT_IS_TEAM_LEAD`) if the agent leads ANY team in the
+   *    project — stricter than `deleteTeamAgent`'s single-team check; server-enforced even if the
+   *    UI is bypassed.
+   * 2. Capture pre-delete team-membership metadata BEFORE the cascade removes the rows.
+   * 3. `storage.deleteAgent` (transactional: rejects running sessions, deletes stopped/failed,
+   *    auto-disbands an emptied team, cascades `team_members`). DEC-3: NO auto-terminate — a
+   *    `ConflictError` is surfaced as structured `AGENT_HAS_RUNNING_SESSIONS` (with the count).
+   * 4. Best-effort preset cleanup (swallow on failure — the agent is already deleted; true
+   *    best-effort, unlike the REST path which re-throws).
+   * 5. Publish `agent.deleted`, plus `team.member.removed` (with full enrichment) for each team
+   *    the agent was a member of — the generic delete path does NOT emit member-removed.
+   */
+  async deleteAgentForChat(input: { projectId: string; agentId: string }): Promise<void> {
+    const agent = await this.storage.getAgent(input.agentId);
+
+    const ledTeams = (await this.teamsStore.getTeamLeadTeams(input.agentId)).filter(
+      (t) => t.projectId === input.projectId,
+    );
+    if (ledTeams.length > 0) {
+      throw new ConflictError(
+        `Cannot delete "${agent.name}" — they are the lead of team "${ledTeams[0].name}"`,
+        {
+          code: 'AGENT_IS_TEAM_LEAD',
+          agentId: input.agentId,
+          teamId: ledTeams[0].id,
+          teamName: ledTeams[0].name,
+        },
+      );
+    }
+
+    // Capture membership BEFORE delete (the cascade clears team_members).
+    const memberTeams = (await this.teamsStore.listTeamsByAgent(input.agentId)).filter(
+      (t) => t.projectId === input.projectId,
+    );
+
+    try {
+      await this.storage.deleteAgent(input.agentId);
+    } catch (error) {
+      if (error instanceof ConflictError) {
+        // The delegate embeds the running-session count in the message; surface it structurally.
+        const match = /(\d+)\s+active session/.exec(error.message);
+        throw new ConflictError(error.message, {
+          code: 'AGENT_HAS_RUNNING_SESSIONS',
+          agentId: input.agentId,
+          runningSessions: match ? Number(match[1]) : undefined,
+        });
+      }
+      throw error;
+    }
+
+    // Best-effort preset cleanup (swallow — the delete already committed).
+    try {
+      await this.settingsService.removeAgentFromProjectPresets(input.projectId, agent.name);
+    } catch (error) {
+      logger.error(
+        { agentId: input.agentId, projectId: input.projectId, agentName: agent.name, error },
+        'Failed to remove agent from project presets after deletion',
+      );
+    }
+
+    // team.member.removed (full enrichment) per team the agent was a member of.
+    for (const team of memberTeams) {
+      try {
+        const eventNames = await this.resolveTeamEventNames(input.projectId, team.teamLeadAgentId);
+        await this.eventsService?.publish('team.member.removed', {
+          teamId: team.id,
+          projectId: input.projectId,
+          teamLeadAgentId: team.teamLeadAgentId,
+          teamName: team.name,
+          removedAgentId: agent.id,
+          removedAgentName: agent.name,
+          projectName: eventNames.projectName,
+          recipientIds: this.buildLeadRecipientIds(team.teamLeadAgentId),
+          agentName: agent.name,
+          teamLeadAgentName: eventNames.teamLeadAgentName,
+        });
+      } catch (error) {
+        logger.error(
+          { agentId: input.agentId, teamId: team.id, error },
+          'Failed to publish team.member.removed event',
+        );
+      }
+    }
+
+    // agent.deleted — human-initiated (actor: null), mirroring the generic controller delete.
+    try {
+      await this.eventsService?.publish('agent.deleted', {
+        agentId: agent.id,
+        agentName: agent.name,
+        projectId: input.projectId,
+        actor: null,
+        teamId: memberTeams[0]?.id ?? null,
+        teamName: memberTeams[0]?.name ?? null,
+      });
+    } catch (error) {
+      logger.error(
+        { agentId: input.agentId, projectId: input.projectId, error },
+        'Failed to publish agent.deleted event',
+      );
+    }
   }
 
   private async validateAgentsInProject(projectId: string, agentIds: string[]): Promise<void> {

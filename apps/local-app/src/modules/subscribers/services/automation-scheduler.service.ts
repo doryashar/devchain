@@ -1,6 +1,5 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { createLogger } from '../../../common/logging/logger';
-import type { SubscriberExecutionResult } from './subscriber-scheduler.types';
 import type { ScheduledTask } from './subscriber-scheduler.types';
 export type { ScheduledTask, SubscriberExecutionResult } from './subscriber-scheduler.types';
 

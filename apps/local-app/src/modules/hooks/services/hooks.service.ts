@@ -1,7 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { STORAGE_SERVICE, type AgentStorage } from '../../storage/interfaces/storage.interface';
 import { EventsService } from '../../events/services/events.service';
-import type { HookEventData, HookEventResponse } from '../dtos/hook-event.dto';
+import type {
+  HookEventData,
+  HookEventResponse,
+  PostToolUseHookEvent,
+  PreToolUseHookEvent,
+  SessionStartHookEvent,
+} from '../dtos/hook-event.dto';
+import { ASK_USER_QUESTION_TOOL, normalizeAskUserQuestions } from '../dtos/ask-user-question.dto';
+import { PendingAskUserQuestionService } from './pending-ask-user-question.service';
 import { createLogger } from '../../../common/logging/logger';
 
 const logger = createLogger('HooksService');
@@ -14,6 +22,7 @@ export class HooksService {
   constructor(
     @Inject(STORAGE_SERVICE) private readonly storage: AgentStorage,
     private readonly events: EventsService,
+    private readonly pendingAskQuestions: PendingAskUserQuestionService,
   ) {}
 
   /**
@@ -36,13 +45,103 @@ export class HooksService {
     switch (hookEventName) {
       case 'SessionStart':
         return this.handleSessionStart(data);
+      case 'PreToolUse':
+        return this.handlePreToolUse(data);
+      case 'PostToolUse':
+        return this.handlePostToolUse(data);
       default:
         logger.info({ hookEventName }, 'Unhandled hook event type — returning ok');
         return { ok: true, handled: false, data: {} };
     }
   }
 
-  private async handleSessionStart(data: HookEventData): Promise<HookEventResponse> {
+  /**
+   * PreToolUse(AskUserQuestion): capture the pending question server-side so
+   * mobile can fetch it. Notification-only — always responds ok, never blocks
+   * the picker.
+   */
+  private async handlePreToolUse(data: PreToolUseHookEvent): Promise<HookEventResponse> {
+    if (data.toolName !== ASK_USER_QUESTION_TOOL) {
+      return { ok: true, handled: false, data: {} };
+    }
+    if (!data.sessionId) {
+      logger.warn(
+        { toolUseId: data.toolUseId },
+        'PreToolUse AskUserQuestion without a DevChain sessionId — cannot store pending',
+      );
+      return { ok: true, handled: false, data: {} };
+    }
+
+    const questions = normalizeAskUserQuestions(data.toolInput);
+    if (!questions) {
+      logger.warn(
+        { toolUseId: data.toolUseId },
+        'PreToolUse AskUserQuestion has malformed questions — skipping store',
+      );
+      return { ok: true, handled: false, data: {} };
+    }
+
+    const entry = this.pendingAskQuestions.set({
+      projectId: data.projectId,
+      agentId: data.agentId,
+      sessionId: data.sessionId,
+      claudeSessionId: data.claudeSessionId,
+      toolUseId: data.toolUseId,
+      questions,
+    });
+
+    try {
+      await this.events.publish('claude.hooks.ask_user_question.pending', {
+        projectId: entry.projectId,
+        agentId: entry.agentId,
+        sessionId: entry.sessionId,
+        claudeSessionId: entry.claudeSessionId,
+        toolUseId: entry.toolUseId,
+        questions: entry.questions,
+        createdAt: entry.createdAt,
+        expiresAt: entry.expiresAt,
+      });
+    } catch (error) {
+      logger.error(
+        { error, hookEventName: 'PreToolUse' },
+        'Failed to publish ask_user_question.pending — responding ok anyway',
+      );
+    }
+
+    return { ok: true, handled: true, data: {} };
+  }
+
+  /**
+   * PostToolUse(AskUserQuestion): the terminal "answered in the TUI" path.
+   * Clears the pending entry and publishes the resolved event.
+   */
+  private async handlePostToolUse(data: PostToolUseHookEvent): Promise<HookEventResponse> {
+    if (data.toolName !== ASK_USER_QUESTION_TOOL) {
+      return { ok: true, handled: false, data: {} };
+    }
+    if (!data.sessionId) {
+      return { ok: true, handled: false, data: {} };
+    }
+
+    const cleared = this.pendingAskQuestions.clearByToolUseId(data.sessionId, data.toolUseId);
+
+    try {
+      await this.events.publish('claude.hooks.ask_user_question.resolved', {
+        projectId: data.projectId,
+        sessionId: data.sessionId,
+        toolUseId: data.toolUseId,
+      });
+    } catch (error) {
+      logger.error(
+        { error, hookEventName: 'PostToolUse' },
+        'Failed to publish ask_user_question.resolved — responding ok anyway',
+      );
+    }
+
+    return { ok: true, handled: true, data: { cleared } };
+  }
+
+  private async handleSessionStart(data: SessionStartHookEvent): Promise<HookEventResponse> {
     // Resolve agentName from agentId if available
     let agentName: string | null = null;
     if (data.agentId) {

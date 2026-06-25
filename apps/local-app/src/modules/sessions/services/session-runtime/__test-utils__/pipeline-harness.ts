@@ -158,6 +158,7 @@ export function createLaunchPipelineHarness() {
     getEpic: jest.fn().mockResolvedValue(fakeEpic()),
     getAgentProfile: jest.fn().mockResolvedValue(fakeProfile()),
     getProvider: jest.fn().mockResolvedValue(fakeProvider()),
+    getProviderEnvForProject: jest.fn().mockReturnValue(null),
     getInitialSessionPrompt: jest.fn().mockResolvedValue(null),
     listProfileProviderConfigsByProfile: jest.fn().mockResolvedValue([fakeProfileProviderConfig()]),
   };
@@ -173,7 +174,7 @@ export function createLaunchPipelineHarness() {
   const terminalIO = {
     createEmptySession: jest.fn().mockResolvedValue(undefined),
     destroySession: jest.fn().mockResolvedValue(undefined),
-    disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+    setAlternateScreen: jest.fn().mockResolvedValue(undefined),
     typeCommand: jest.fn().mockResolvedValue(undefined),
     waitForOutput: jest.fn().mockResolvedValue(undefined),
     deliver: jest.fn().mockResolvedValue(undefined),
@@ -271,6 +272,7 @@ export function createRestorePipelineHarness() {
     getEpic: jest.fn().mockResolvedValue(fakeEpic()),
     getAgentProfile: jest.fn().mockResolvedValue(fakeProfile()),
     getProvider: jest.fn().mockResolvedValue(fakeProvider()),
+    getProviderEnvForProject: jest.fn().mockReturnValue(null),
     getInitialSessionPrompt: jest.fn().mockResolvedValue(null),
     listProfileProviderConfigsByProfile: jest.fn().mockResolvedValue([fakeProfileProviderConfig()]),
   };
@@ -286,7 +288,7 @@ export function createRestorePipelineHarness() {
   const terminalIO = {
     createEmptySession: jest.fn().mockResolvedValue(undefined),
     destroySession: jest.fn().mockResolvedValue(undefined),
-    disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+    setAlternateScreen: jest.fn().mockResolvedValue(undefined),
     typeCommand: jest.fn().mockResolvedValue(undefined),
     sessionExists: jest.fn().mockResolvedValue(false),
     startHealthCheck: jest.fn(),

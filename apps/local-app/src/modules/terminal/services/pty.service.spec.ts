@@ -20,7 +20,7 @@ const makePtyProcess = () => ({
   kill: jest.fn(),
 });
 
-const createService = () => {
+const createService = (opts?: { usesAlternateScreen?: boolean; needsLfNormalize?: boolean }) => {
   const terminalGateway = {
     broadcastTerminalData: jest.fn(),
   } as unknown as TerminalGateway;
@@ -38,7 +38,8 @@ const createService = () => {
   } as unknown as SettingsService;
 
   const sessionsService = {
-    shouldNormalizeLfFor: jest.fn().mockReturnValue(true),
+    shouldNormalizeLfFor: jest.fn().mockReturnValue(opts?.needsLfNormalize ?? true),
+    usesAlternateScreenFor: jest.fn().mockReturnValue(opts?.usesAlternateScreen ?? false),
   } as unknown as SessionsService;
 
   const service = new PtyService(
@@ -116,6 +117,118 @@ describe('PtyService.startStreaming', () => {
     await service.startStreaming('sid-idem', 'tmux-idem', { cols: 200, rows: 50 });
 
     expect(ptyMod.spawn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PtyService alt-screen strip gate', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    ptyMod.spawn.mockReturnValue(makePtyProcess());
+  });
+
+  // A combined alt-screen + mouse-tracking enable, exactly what a full-screen TUI emits.
+  const COMBINED_DECSET = '\x1b[?1049;1000h';
+
+  it('skips the strip for TUI providers — preserves combined ?1049;1000h (mouse-tracking survives)', async () => {
+    const { service, terminalGateway } = createService({ usesAlternateScreen: true });
+    await service.startStreaming('tui-sid', 'tmux-tui');
+
+    const ptyProc = ptyMod.spawn.mock.results[0].value;
+    const onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    onData(COMBINED_DECSET);
+
+    expect(terminalGateway.broadcastTerminalData).toHaveBeenCalledWith('tui-sid', COMBINED_DECSET);
+  });
+
+  it('strips the alt-screen DECSET for non-TUI providers (default — scrollback preserved)', async () => {
+    const { service, terminalGateway } = createService({ usesAlternateScreen: false });
+    await service.startStreaming('cli-sid', 'tmux-cli');
+
+    const ptyProc = ptyMod.spawn.mock.results[0].value;
+    const onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    onData(COMBINED_DECSET);
+
+    // The whole DECSET is removed when it contains an alt-screen code.
+    expect(terminalGateway.broadcastTerminalData).toHaveBeenCalledWith('cli-sid', '');
+  });
+});
+
+// mouseTrackingMode survival — the user-reported symptom: wheel events scroll
+// our scrollback instead of the OpenCode TUI because xterm's mouseTrackingMode
+// stays 'none' when the `?1000h` (mouse-tracking enable) is lost.
+//
+// On BOTH restoration paths (seeded reconnect + no-seed reconnect) the TUI
+// repaints via triggerRedraw and re-emits a combined `ESC[?1049;1000h`. The PTY
+// strip gate is path-independent (one onData handler), so these tests lock the
+// survival for both paths at the cheapest layer. The redraw gating itself is
+// covered in terminal.gateway.spec.ts (Task 2); the client wheel-forwarding
+// logic is covered in useXterm.spec.ts.
+describe('PtyService — OpenCode mouseTrackingMode survival (user-reported symptom)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    ptyMod.spawn.mockReturnValue(makePtyProcess());
+  });
+
+  it('preserves the ?1000h mouse-tracking enable inside a combined DECSET for TUI providers', async () => {
+    const { service, terminalGateway } = createService({ usesAlternateScreen: true });
+    await service.startStreaming('tui-mouse', 'tmux-tui-mouse');
+
+    const ptyProc = ptyMod.spawn.mock.results[0].value;
+    const onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    // Full-screen TUI repaint: alt-screen enter + vt200 mouse enable together.
+    onData('\x1b[?1049;1000h');
+
+    // Byte-for-byte preservation (existing assertion)…
+    expect(terminalGateway.broadcastTerminalData).toHaveBeenCalledWith(
+      'tui-mouse',
+      '\x1b[?1049;1000h',
+    );
+    // …AND the mouse-tracking mode number (1000) survives inside the combined
+    // DECSET parameter list. This is what flips xterm's mouseTrackingMode off
+    // 'none' so the wheel forwards into the TUI (the user-reported symptom).
+    const broadcast = terminalGateway.broadcastTerminalData.mock.calls[0][1] as string;
+    expect(broadcast).toContain('1000');
+    expect(broadcast).toContain('1049');
+  });
+
+  it('loses the ?1000h mouse-tracking enable for non-TUI providers (documented collateral)', async () => {
+    const { service, terminalGateway } = createService({ usesAlternateScreen: false });
+    await service.startStreaming('cli-mouse', 'tmux-cli-mouse');
+
+    const ptyProc = ptyMod.spawn.mock.results[0].value;
+    const onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    onData('\x1b[?1049;1000h');
+
+    // The whole combined DECSET is stripped (contains 1049) — mouse enable is
+    // collateral damage. This is WHY non-TUI providers don't get wheel
+    // passthrough (and is intentional: they don't run a mouse-driven TUI).
+    expect(terminalGateway.broadcastTerminalData).toHaveBeenCalledWith('cli-mouse', '');
+  });
+
+  it('preserves a standalone ?1000h mouse enable for BOTH provider types (no alt-screen code to strip)', async () => {
+    // ?1000h alone contains no 47/1047/1049, so the sanitizer leaves it intact
+    // regardless of provider policy — defensive assertion that the strip only
+    // fires on alt-screen codes.
+    const tui = createService({ usesAlternateScreen: true });
+    await tui.service.startStreaming('tui-standalone', 'tmux-tui-standalone');
+    let ptyProc = ptyMod.spawn.mock.results[0].value;
+    let onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    onData('\x1b[?1000h');
+    expect(tui.terminalGateway.broadcastTerminalData).toHaveBeenLastCalledWith(
+      'tui-standalone',
+      '\x1b[?1000h',
+    );
+
+    jest.clearAllMocks();
+    const cli = createService({ usesAlternateScreen: false });
+    await cli.service.startStreaming('cli-standalone', 'tmux-cli-standalone');
+    ptyProc = ptyMod.spawn.mock.results[0].value;
+    onData = ptyProc.onData.mock.calls[0][0] as (d: string) => void;
+    onData('\x1b[?1000h');
+    expect(cli.terminalGateway.broadcastTerminalData).toHaveBeenLastCalledWith(
+      'cli-standalone',
+      '\x1b[?1000h',
+    );
   });
 });
 

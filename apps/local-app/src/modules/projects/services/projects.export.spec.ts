@@ -28,6 +28,7 @@ describe('ProjectsService', () => {
     getProject: jest.Mock;
     listProviders: jest.Mock;
     listProvidersByIds: jest.Mock;
+    listEnvScopesByProviderIds: jest.Mock;
     listProviderModelsByProviderIds: jest.Mock;
     bulkCreateProviderModels: jest.Mock;
     listPrompts: jest.Mock;
@@ -64,6 +65,8 @@ describe('ProjectsService', () => {
     getAgent: jest.Mock;
     getAgentProfile: jest.Mock;
     getProfileProviderConfig: jest.Mock;
+    parkSessionsFromAgents: jest.Mock;
+    applySessionPlan: jest.Mock;
   };
   let sessions: {
     listActiveSessions: jest.Mock;
@@ -106,6 +109,7 @@ describe('ProjectsService', () => {
       ),
       listProviders: jest.fn(),
       listProvidersByIds: jest.fn().mockResolvedValue([]),
+      listEnvScopesByProviderIds: jest.fn().mockReturnValue(new Map()),
       listProviderModelsByProviderIds: jest.fn().mockResolvedValue([]),
       bulkCreateProviderModels: jest.fn().mockResolvedValue({ added: [], existing: [] }),
       listPrompts: jest.fn(),
@@ -148,6 +152,8 @@ describe('ProjectsService', () => {
       getAgent: jest.fn(),
       getAgentProfile: jest.fn(),
       getProfileProviderConfig: jest.fn(),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map()),
+      applySessionPlan: jest.fn().mockResolvedValue(undefined),
     };
 
     sessions = {
@@ -1434,6 +1440,159 @@ describe('ProjectsService', () => {
       const result = await service.exportProject(projectId);
 
       expect(result.scheduledEpics[0].enabled).toBe(false);
+    });
+  });
+
+  describe('provider env scope filtering on export', () => {
+    const projectId = 'project-123';
+    const otherProjectId = 'project-other';
+
+    beforeEach(() => {
+      storage.listPrompts.mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
+      storage.listAgentProfiles.mockResolvedValue({
+        items: [{ id: 'prof-1', name: 'Test Profile' }],
+        total: 1,
+        limit: 1000,
+        offset: 0,
+      });
+      storage.listAgents.mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
+      storage.listStatuses.mockResolvedValue({ items: [], total: 0, limit: 1000, offset: 0 });
+      storage.getInitialSessionPrompt.mockResolvedValue(null);
+      storage.listWatchers.mockResolvedValue([]);
+      storage.listSubscribers.mockResolvedValue([]);
+      storage.listProfileProviderConfigsByProfile.mockResolvedValue([
+        {
+          id: 'config-1',
+          profileId: 'prof-1',
+          providerId: 'prov-1',
+          name: 'default',
+          options: null,
+          env: null,
+          position: 0,
+          createdAt: '',
+          updatedAt: '',
+        },
+      ]);
+    });
+
+    it('should export source-project-scoped key and omit other-project-scoped key', async () => {
+      storage.listProvidersByIds.mockResolvedValue([
+        {
+          id: 'prov-1',
+          name: 'claude',
+          autoCompactThreshold: null,
+          autoCompactThreshold1m: null,
+          oneMillionContextEnabled: false,
+          env: { SOURCE_KEY: 'val-source', OTHER_KEY: 'val-other' },
+        },
+      ]);
+
+      const scopeMap = new Map([
+        [
+          'prov-1',
+          {
+            SOURCE_KEY: [projectId],
+            OTHER_KEY: [otherProjectId],
+          },
+        ],
+      ]);
+      storage.listEnvScopesByProviderIds.mockReturnValue(scopeMap);
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.providerSettings).toHaveLength(1);
+      expect(result.providerSettings![0].env).toEqual({ SOURCE_KEY: 'val-source' });
+      expect(result.providerSettings![0].env).not.toHaveProperty('OTHER_KEY');
+    });
+
+    it('should still export other settings when all env keys are scoped to other projects', async () => {
+      storage.listProvidersByIds.mockResolvedValue([
+        {
+          id: 'prov-1',
+          name: 'claude',
+          autoCompactThreshold: 85,
+          autoCompactThreshold1m: null,
+          oneMillionContextEnabled: true,
+          env: { SCOPED_KEY: 'secret' },
+        },
+      ]);
+
+      const scopeMap = new Map([['prov-1', { SCOPED_KEY: [otherProjectId] }]]);
+      storage.listEnvScopesByProviderIds.mockReturnValue(scopeMap);
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.providerSettings).toHaveLength(1);
+      expect(result.providerSettings![0]).toEqual({
+        name: 'claude',
+        autoCompactThreshold: 85,
+        oneMillionContextEnabled: true,
+      });
+      expect(result.providerSettings![0].env).toBeUndefined();
+    });
+
+    it('should not include redacted secret keys excluded by scope', async () => {
+      storage.listProvidersByIds.mockResolvedValue([
+        {
+          id: 'prov-1',
+          name: 'claude',
+          autoCompactThreshold: 85,
+          autoCompactThreshold1m: null,
+          oneMillionContextEnabled: false,
+          env: { ANTHROPIC_API_KEY: 'sk-secret', GLOBAL_VAR: 'open' },
+        },
+      ]);
+
+      const scopeMap = new Map([['prov-1', { ANTHROPIC_API_KEY: [otherProjectId] }]]);
+      storage.listEnvScopesByProviderIds.mockReturnValue(scopeMap);
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.providerSettings).toHaveLength(1);
+      expect(result.providerSettings![0].env).toEqual({ GLOBAL_VAR: 'open' });
+      expect(result.providerSettings![0].env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    });
+
+    it('should export all global env unchanged when no scopes exist', async () => {
+      storage.listProvidersByIds.mockResolvedValue([
+        {
+          id: 'prov-1',
+          name: 'claude',
+          autoCompactThreshold: null,
+          autoCompactThreshold1m: null,
+          oneMillionContextEnabled: false,
+          env: { GLOBAL_A: 'a', GLOBAL_B: 'b' },
+        },
+      ]);
+
+      storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.providerSettings).toHaveLength(1);
+      expect(result.providerSettings![0].env).toEqual({ GLOBAL_A: 'a', GLOBAL_B: 'b' });
+    });
+
+    it('should not include scope project IDs anywhere in exported JSON', async () => {
+      storage.listProvidersByIds.mockResolvedValue([
+        {
+          id: 'prov-1',
+          name: 'claude',
+          autoCompactThreshold: null,
+          autoCompactThreshold1m: null,
+          oneMillionContextEnabled: false,
+          env: { SCOPED_KEY: 'val' },
+        },
+      ]);
+
+      const scopeMap = new Map([['prov-1', { SCOPED_KEY: [projectId] }]]);
+      storage.listEnvScopesByProviderIds.mockReturnValue(scopeMap);
+
+      const result = await service.exportProject(projectId);
+
+      const json = JSON.stringify(result);
+      expect(json).not.toContain(otherProjectId);
+      expect(json).not.toContain('provider_env_scopes');
     });
   });
 });

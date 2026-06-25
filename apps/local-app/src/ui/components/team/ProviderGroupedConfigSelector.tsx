@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { Check } from 'lucide-react';
 import { Checkbox } from '@/ui/components/ui/checkbox';
+import { deriveSelectionMode } from './selector-types';
 import type { SelectionMode, ProfileSelection, ConfigItem } from './selector-types';
 
 export type { SelectionMode, ProfileSelection, ConfigItem };
@@ -133,6 +133,25 @@ export function ProviderGroupedConfigSelector<
     }
   }
 
+  function handleConfigToggle(configKey: TConfigKey, checked: boolean) {
+    // selectedConfigKeys already expands 'allow-all' to all visibleConfigs at lines 66-72,
+    // so building from it correctly materializes the full set before single-key mutation.
+    const next = new Set<TConfigKey>(selectedConfigKeys);
+    if (checked) next.add(configKey);
+    else next.delete(configKey);
+    const nextKeys = [...next];
+
+    // IMPORTANT: derive 'full' against ALL profile configs, NOT visibleConfigs.
+    // `allow-all` is the server-side sentinel for "no restrictions". If the pivot were
+    // visibleConfigs.length, selecting every visible config in a template-restricted profile
+    // would silently collapse back to unrestricted allow-all, defeating the template intent.
+    const mode = deriveSelectionMode(
+      nextKeys,
+      configs.map((c) => c.key),
+    );
+    emitChange(mode, mode === 'subset' ? nextKeys : undefined);
+  }
+
   function getProviderCheckedState(providerName: string): boolean | 'indeterminate' {
     const toggleSet = getProviderToggleSet(providerName);
     if (toggleSet.length === 0) return false;
@@ -175,14 +194,7 @@ export function ProviderGroupedConfigSelector<
           <div key={provider.name} className="rounded border p-2">
             <label className="flex cursor-pointer items-center gap-2 px-1 py-1">
               <Checkbox
-                checked={state === true}
-                ref={(el) => {
-                  if (el) {
-                    const btn = el as unknown as HTMLButtonElement;
-                    btn.dataset.state =
-                      state === 'indeterminate' ? 'indeterminate' : state ? 'checked' : 'unchecked';
-                  }
-                }}
+                checked={state}
                 onCheckedChange={(checked) => handleProviderToggle(provider.name, checked === true)}
                 aria-label={`Provider ${provider.name}`}
               />
@@ -195,19 +207,21 @@ export function ProviderGroupedConfigSelector<
               {provider.configs.map((config) => {
                 const selected = selectedConfigKeys.has(config.key);
                 return (
-                  <div
+                  <label
                     key={config.key}
-                    className={`flex items-center gap-1.5 text-xs ${
+                    className={`flex cursor-pointer items-center gap-1.5 text-xs ${
                       selected ? 'text-foreground' : 'text-muted-foreground/60 line-through'
                     }`}
                   >
-                    {selected ? (
-                      <Check className="h-3 w-3 shrink-0" aria-label="selected" />
-                    ) : (
-                      <span className="inline-block w-3 shrink-0" aria-hidden />
-                    )}
+                    <Checkbox
+                      checked={selected}
+                      onCheckedChange={(checked) =>
+                        handleConfigToggle(config.key, checked === true)
+                      }
+                      aria-label={`Config ${config.key}`}
+                    />
                     <span>{config.label}</span>
-                  </div>
+                  </label>
                 );
               })}
             </div>

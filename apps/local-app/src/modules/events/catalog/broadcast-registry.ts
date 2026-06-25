@@ -1,8 +1,8 @@
-import type { BroadcastTopicEntry } from './broadcast-metadata';
+import type { BroadcastRegistryTopicEntry } from './broadcast-metadata';
 
 type P = Record<string, unknown>;
 
-export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
+export const broadcastRegistry: Record<string, BroadcastRegistryTopicEntry<P>[]> = {
   // ── Activity ──
   'session.activity.changed': [
     {
@@ -13,6 +13,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         lastActivityAt: p.lastActivityAt,
         busySince: p.busySince,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
     },
   ],
 
@@ -22,6 +23,9 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
       topic: (p) => `chat/${p.threadId}`,
       type: 'message.created',
       payloadProjection: (p) => p.message,
+      clientReaction: { kind: 'custom-handler', owner: 'useChatSocket' },
+      // The thread/group message body is real content — withheld on a plaintext push.
+      contentBearing: true,
     },
   ],
   'chat.message.read': [
@@ -33,6 +37,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         agentId: p.agentId,
         readAt: p.readAt,
       }),
+      clientReaction: { kind: 'no-op', owner: 'global' },
     },
   ],
 
@@ -49,6 +54,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         agentId: p.agentId ?? null,
         parentId: p.parentId ?? null,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
     },
   ],
   'epic.deleted': [
@@ -61,6 +67,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         title: p.title,
         parentId: p.parentId ?? null,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
     },
   ],
   'epic.updated': [
@@ -74,6 +81,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         epicTitle: p.epicTitle,
         changes: p.changes,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
     },
   ],
   'epic.comment.created': [
@@ -86,13 +94,15 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         authorName: p.authorName,
         content: p.content,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
     },
   ],
   'epic.broadcast': [
     {
       topic: (p) => `project/${p.projectId}/epics`,
-      type: (p) => p.type as string,
+      type: (p) => String(p.type),
       payloadProjection: (p) => p.data,
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
     },
   ],
   'scheduled_epic.executed': [
@@ -114,6 +124,32 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         errorCode: p.errorCode,
         errorMessage: p.errorMessage,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useBoardSync' },
+    },
+  ],
+
+  // ── Claude hooks: AskUserQuestion (normalized questions only — never raw toolInput) ──
+  'claude.hooks.ask_user_question.pending': [
+    {
+      topic: (p) => `session/${p.sessionId}`,
+      type: 'ask_user_question.pending',
+      payloadProjection: (p) => ({
+        toolUseId: p.toolUseId,
+        questions: p.questions,
+      }),
+      clientReaction: { kind: 'no-op', owner: 'global' },
+      // The question text is real content — withheld on a plaintext push.
+      contentBearing: true,
+    },
+  ],
+  'claude.hooks.ask_user_question.resolved': [
+    {
+      topic: (p) => `session/${p.sessionId}`,
+      type: 'ask_user_question.resolved',
+      payloadProjection: (p) => ({
+        toolUseId: p.toolUseId,
+      }),
+      clientReaction: { kind: 'no-op', owner: 'global' },
     },
   ],
 
@@ -126,6 +162,9 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         agentId: p.agentId,
         agentName: p.agentName,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
+      // Carries the agent NAME — real content, withheld on a plaintext push.
+      contentBearing: true,
     },
   ],
   'agent.deleted': [
@@ -138,6 +177,9 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         teamId: p.teamId ?? null,
         teamName: p.teamName ?? null,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
+      // Carries agent/team NAMES — real content, withheld on a plaintext push.
+      contentBearing: true,
     },
   ],
   'team.member.added': [
@@ -150,6 +192,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         addedAgentId: p.addedAgentId,
         addedAgentName: p.addedAgentName,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
     },
   ],
   'team.member.removed': [
@@ -162,6 +205,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         removedAgentId: p.removedAgentId,
         removedAgentName: p.removedAgentName,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
     },
   ],
   'team.config.updated': [
@@ -174,6 +218,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         previous: p.previous,
         current: p.current,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
     },
   ],
 
@@ -194,6 +239,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         authorAgentId: p.authorAgentId,
         parentId: p.parentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
     {
       topic: (p) => `project/${p.projectId}/reviews`,
@@ -202,6 +248,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         reviewId: p.reviewId,
         commentId: p.commentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
   ],
   'review.comment.resolved': [
@@ -214,6 +261,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         status: p.status,
         version: p.version,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
     {
       topic: (p) => `project/${p.projectId}/reviews`,
@@ -223,6 +271,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         commentId: p.commentId,
         status: p.status,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
   ],
   'review.updated': [
@@ -235,6 +284,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         title: p.title,
         changes: p.changes,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
     {
       topic: (p) => `project/${p.projectId}/reviews`,
@@ -245,6 +295,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         title: p.title,
         changes: p.changes,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
   ],
   'review.comment.updated': [
@@ -259,6 +310,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         editedAt: p.editedAt,
         filePath: p.filePath,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
     {
       topic: (p) => `project/${p.projectId}/reviews`,
@@ -267,6 +319,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         reviewId: p.reviewId,
         commentId: p.commentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
   ],
   'review.comment.deleted': [
@@ -279,6 +332,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         filePath: p.filePath,
         parentId: p.parentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
     {
       topic: (p) => `project/${p.projectId}/reviews`,
@@ -287,6 +341,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         reviewId: p.reviewId,
         commentId: p.commentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useReviewSubscription' },
     },
   ],
 
@@ -299,6 +354,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         sessionId: p.sessionId,
         providerName: p.providerName,
       }),
+      clientReaction: { kind: 'custom-handler', owner: 'useSessionTranscript' },
     },
   ],
   'session.providerSessionId.discovered': [
@@ -309,6 +365,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         sessionId: p.sessionId,
         providerName: p.providerName,
       }),
+      clientReaction: { kind: 'custom-handler', owner: 'useSessionTranscript' },
     },
   ],
   'session.transcript.updated': [
@@ -327,6 +384,10 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         deltaChunks: p.deltaChunks,
         deltaMessages: p.deltaMessages,
       }),
+      clientReaction: { kind: 'custom-handler', owner: 'useSessionTranscript' },
+      // `deltaChunks`/`deltaMessages` carry transcript body text — real content,
+      // withheld on a plaintext push (mobile recovers via the per-topic catch-up RPC).
+      contentBearing: true,
     },
   ],
   'session.transcript.ended': [
@@ -338,6 +399,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         finalMetrics: p.finalMetrics,
         endReason: p.endReason,
       }),
+      clientReaction: { kind: 'custom-handler', owner: 'useSessionTranscript' },
     },
   ],
 
@@ -347,6 +409,7 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
       topic: 'worktrees',
       type: 'changed',
       payloadProjection: () => ({}),
+      clientReaction: { kind: 'invalidate', owner: 'useWorktreeTab' },
     },
   ],
 
@@ -360,12 +423,14 @@ export const broadcastRegistry: Record<string, BroadcastTopicEntry<P>[]> = {
         sessionId: p.sessionId,
         agentId: p.agentId,
       }),
+      clientReaction: { kind: 'invalidate', owner: 'useChatSocket' },
     },
   ],
   'session.recommendation': [
     {
       topic: 'system',
       type: 'session_recommendation',
+      clientReaction: { kind: 'custom-handler', owner: 'Layout' },
     },
   ],
 };

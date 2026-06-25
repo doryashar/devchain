@@ -196,6 +196,57 @@ export class PresetSettingsDelegate {
     });
   }
 
+  async removeAgentFromProjectPresets(projectId: string, agentName: string): Promise<void> {
+    const trimmedAgentName = agentName.trim();
+
+    if (!trimmedAgentName) {
+      throw new ValidationError('Agent name cannot be empty or whitespace only', { projectId });
+    }
+
+    const normalizedAgentName = this.normalizeName(trimmedAgentName);
+
+    this.writeInTransaction(() => {
+      const existingPresets = this.getProjectPresets(projectId);
+      let changed = false;
+
+      const updatedPresets = existingPresets.map((preset) => {
+        const updatedAgentConfigs = preset.agentConfigs.filter((agentConfig) => {
+          const matches = this.normalizeName(agentConfig.agentName) === normalizedAgentName;
+          if (matches) changed = true;
+          return !matches;
+        });
+
+        if (updatedAgentConfigs.length === preset.agentConfigs.length) {
+          return preset;
+        }
+
+        return {
+          ...preset,
+          agentConfigs: updatedAgentConfigs,
+        };
+      });
+
+      if (!changed) {
+        logger.info(
+          { projectId, agentName: trimmedAgentName },
+          'No project preset agent references needed removal',
+        );
+        return;
+      }
+
+      const existingPresetsMap = this.readProjectPresetsMap();
+      this.writeProjectPresetsMap({
+        ...existingPresetsMap,
+        [projectId]: updatedPresets,
+      });
+
+      logger.info(
+        { projectId, agentName: trimmedAgentName },
+        'Project preset agent references removed',
+      );
+    });
+  }
+
   async createProjectPreset(projectId: string, preset: unknown): Promise<void> {
     const result = TemplatePresetSchema.safeParse(preset);
     if (!result.success) {

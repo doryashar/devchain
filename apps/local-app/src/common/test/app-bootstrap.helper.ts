@@ -162,7 +162,7 @@ function createTerminalIOMock(): Record<string, jest.Mock> {
     listSessions: jest.fn().mockResolvedValue([]),
     sessionExists: jest.fn().mockResolvedValue(false),
     createEmptySession: jest.fn().mockResolvedValue({ name: 'test-session' }),
-    disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+    setAlternateScreen: jest.fn().mockResolvedValue(undefined),
     typeCommand: jest.fn().mockResolvedValue(undefined),
     listAllSessionNames: jest.fn().mockResolvedValue(new Set()),
     deliver: jest.fn().mockResolvedValue({ delivered: true }),
@@ -192,6 +192,12 @@ function createTunnelClientMock(): Record<string, jest.Mock> {
     onModuleDestroy: jest.fn(),
     handleCloudConnected: jest.fn(),
     handleCloudDisconnected: jest.fn(),
+    canPush: jest.fn().mockReturnValue(false),
+    sendPush: jest.fn().mockReturnValue(false),
+    // Viewport sink surface (ViewportFrameSink): the streamer registers a ready listener in
+    // onModuleInit and pushes frames through these. Return a no-op unsubscribe.
+    sendViewport: jest.fn().mockReturnValue(false),
+    onPushReady: jest.fn().mockReturnValue(() => {}),
   };
 }
 

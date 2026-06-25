@@ -55,7 +55,8 @@ jest.mock('../provider-launch-config', () => ({
 // ── Imports ────────────────────────────────────────────────────────────
 
 import { createRestorePipelineHarness, fakeProvider } from './__test-utils__/pipeline-harness';
-import { ConflictError } from '../../../../common/errors/error-types';
+import { ConflictError, ValidationError } from '../../../../common/errors/error-types';
+import { resolve as resolveLaunchConfig } from '../provider-launch-config';
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
@@ -183,6 +184,69 @@ describe('SessionRestorePipeline', () => {
     });
   });
 
+  // Per-provider alternate-screen policy — restore matrix.
+  // Restore MUST apply the same alt-screen policy as launch (the tmux window is
+  // freshly created on restore too). This is GATE 1 of the two-gate invariant;
+  // the PTY strip (GATE 2) reads the SAME adapter field — see
+  // sessions.service.spec.ts → usesAlternateScreenFor.
+  // Layer: pipeline unit test with the shared restore harness.
+  describe('per-provider alternate-screen policy (restore matrix)', () => {
+    it('enables alternate-screen for a full-screen TUI adapter (usesAlternateScreen: true)', async () => {
+      const { pipeline, createTrackedPrepare, mocks } = createRestorePipelineHarness();
+      mocks.sqliteMock.prepare.mockImplementation(createTrackedPrepare());
+      (
+        mocks.adapter as { terminalOutputBehavior?: { usesAlternateScreen: boolean } }
+      ).terminalOutputBehavior = { usesAlternateScreen: true };
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledTimes(1);
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        true,
+      );
+    });
+
+    it('suppresses alternate-screen by default (adapter has no terminalOutputBehavior)', async () => {
+      const { pipeline, createTrackedPrepare, mocks } = createRestorePipelineHarness();
+      mocks.sqliteMock.prepare.mockImplementation(createTrackedPrepare());
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledTimes(1);
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        false,
+      );
+    });
+
+    it('suppresses alternate-screen when the adapter explicitly opts out (usesAlternateScreen: false)', async () => {
+      const { pipeline, createTrackedPrepare, mocks } = createRestorePipelineHarness();
+      mocks.sqliteMock.prepare.mockImplementation(createTrackedPrepare());
+      (
+        mocks.adapter as { terminalOutputBehavior?: { usesAlternateScreen: boolean } }
+      ).terminalOutputBehavior = { usesAlternateScreen: false };
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(mocks.terminalIO.setAlternateScreen).toHaveBeenCalledWith(
+        { name: expect.any(String) },
+        false,
+      );
+    });
+
+    it('sets alternate-screen AFTER creating the tmux session (ordering — window option needs a target)', async () => {
+      const { pipeline, createTrackedPrepare, mocks } = createRestorePipelineHarness();
+      mocks.sqliteMock.prepare.mockImplementation(createTrackedPrepare());
+
+      await pipeline.restore(sessionId, projectId);
+
+      const createOrder = mocks.terminalIO.createEmptySession.mock.invocationCallOrder[0];
+      const altOrder = mocks.terminalIO.setAlternateScreen.mock.invocationCallOrder[0];
+      expect(altOrder).toBeGreaterThan(createOrder);
+    });
+  });
+
   // Scenario 9: session.restored event carries providerName
   describe('Scenario 9: session.restored payload includes providerName', () => {
     it('emits providerName from provider.name (lowercased)', async () => {
@@ -225,6 +289,128 @@ describe('SessionRestorePipeline', () => {
 
       // No typeCommand
       expect(mocks.terminalIO.typeCommand).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('provider env scope filtering', () => {
+    it('calls getProviderEnvForProject with provider.id and projectId', async () => {
+      const { pipeline, mocks } = createRestorePipelineHarness();
+
+      mocks.storage.getProviderEnvForProject.mockReturnValue({ FILTERED_KEY: 'filtered-value' });
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(mocks.storage.getProviderEnvForProject).toHaveBeenCalledWith(
+        'provider-1',
+        'project-1',
+      );
+    });
+
+    it('passes filtered env to resolveLaunchConfig instead of raw provider.env', async () => {
+      const { pipeline, mocks } = createRestorePipelineHarness();
+      const resolveMock = resolveLaunchConfig as jest.Mock;
+
+      const filteredEnv = { SCOPED_KEY: 'scoped-value' };
+      mocks.storage.getProviderEnvForProject.mockReturnValue(filteredEnv);
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(resolveMock).toHaveBeenCalledWith(
+        expect.objectContaining({ providerEnv: filteredEnv }),
+      );
+    });
+  });
+
+  // Scenario 10: opencode restore — verifies the ses_ provider_session_id
+  // threads from the DB row through resolveLaunchConfig into the typed restore
+  // command, and that a missing id fails clearly (NO_PROVIDER_SESSION_ID) with
+  // zero side effects — never a silent wrong-session attach. The opencode
+  // `--session` arg-building itself is covered by opencode.adapter.spec.ts
+  // (providerSessionIdRequiredForRestore = true); this block proves the
+  // pipeline seam that hands that id to the adapter contract.
+  describe('Scenario 10: opencode restore — ses_ threading & missing-id gating', () => {
+    it('passes the stored ses_ provider_session_id into resolveLaunchConfig with mode=restore', async () => {
+      const { pipeline, stoppedSessionRow } = createRestorePipelineHarness();
+      const resolveMock = resolveLaunchConfig as jest.Mock;
+      resolveMock.mockClear();
+
+      const sesId = 'ses_opencode-abc-123';
+      stoppedSessionRow.provider_session_id = sesId;
+
+      await pipeline.restore(sessionId, projectId);
+
+      expect(resolveMock).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'restore', providerSessionId: sesId }),
+      );
+    });
+
+    it('types the restore command carrying the ses_ id into tmux and completes restore', async () => {
+      const { pipeline, stoppedSessionRow, mocks } = createRestorePipelineHarness();
+      const sesId = 'ses_opencode-abc-123';
+      stoppedSessionRow.provider_session_id = sesId;
+
+      await pipeline.restore(sessionId, projectId);
+
+      // resolve mock yields ['test-provider', '--resume', sesId]; the pipeline
+      // types exactly that argv — proving the correct ses_ reaches the command.
+      expect(mocks.terminalIO.typeCommand).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.arrayContaining([sesId]),
+      );
+      // argv-includes guard passed → restore completed, correct session reattached
+      expect(mocks.eventsService.publish).toHaveBeenCalledWith(
+        'session.restored',
+        expect.objectContaining({ sessionId }),
+      );
+    });
+
+    it('throws ConflictError(NO_PROVIDER_SESSION_ID) with zero side effects when the id is missing', async () => {
+      const { pipeline, stoppedSessionRow, mocks } = createRestorePipelineHarness();
+      stoppedSessionRow.provider_session_id = null;
+
+      let caught: unknown;
+      try {
+        await pipeline.restore(sessionId, projectId);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(ConflictError);
+      expect((caught as ConflictError).details).toMatchObject({
+        code: 'NO_PROVIDER_SESSION_ID',
+      });
+
+      // Clear failure before any side effect — no wrong session can attach.
+      expect(mocks.terminalIO.createEmptySession).not.toHaveBeenCalled();
+      expect(mocks.terminalIO.typeCommand).not.toHaveBeenCalled();
+      expect(mocks.updateStmt.run).not.toHaveBeenCalled();
+      expect(mocks.eventsService.publish).not.toHaveBeenCalledWith(
+        'session.restored',
+        expect.anything(),
+      );
+    });
+
+    it('throws ValidationError when restore argv omits the provider_session_id (no silent attach)', async () => {
+      const { pipeline, stoppedSessionRow, mocks } = createRestorePipelineHarness();
+      stoppedSessionRow.provider_session_id = 'ses_opencode-guard';
+      const resolveMock = resolveLaunchConfig as jest.Mock;
+      // Adapter/resolve contract violation: argv drops the provider session id.
+      resolveMock.mockImplementationOnce(() => ({
+        argv: ['opencode'],
+        commandArgs: ['opencode'],
+        env: null,
+      }));
+
+      await expect(pipeline.restore(sessionId, projectId)).rejects.toThrow(ValidationError);
+
+      // The pipeline's own guard (L137-142) fires before flipToRunning — zero side effects.
+      expect(mocks.terminalIO.createEmptySession).not.toHaveBeenCalled();
+      expect(mocks.terminalIO.typeCommand).not.toHaveBeenCalled();
+      expect(mocks.updateStmt.run).not.toHaveBeenCalled();
+      expect(mocks.eventsService.publish).not.toHaveBeenCalledWith(
+        'session.restored',
+        expect.anything(),
+      );
     });
   });
 });

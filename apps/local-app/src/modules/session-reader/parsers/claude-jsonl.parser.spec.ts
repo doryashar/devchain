@@ -302,15 +302,20 @@ describe('ClaudeJsonlParser', () => {
   });
 
   describe('tool calls and results', () => {
-    it('should extract tool_use and tool_result with ID linking', async () => {
+    it('folds a standalone user(tool_result) into the preceding assistant turn (ID linking preserved)', async () => {
       const filePath = writeTempJsonl([userEntry, toolUseAssistantEntry, toolResultUserEntry]);
       try {
         const result = await parseClaudeJsonl(filePath);
 
-        expect(result.messages).toHaveLength(3);
+        // The tool_result user entry is folded → 2 messages, not 3 (count parity with
+        // Codex/OpenCode: tool plumbing is not its own conversational message).
+        expect(result.messages).toHaveLength(2);
+        expect(result.metrics.messageCount).toBe(2);
 
-        // Tool call
         const toolMsg = result.messages[1];
+        expect(toolMsg.role).toBe('assistant');
+
+        // Tool call still present on the assistant message.
         expect(toolMsg.toolCalls).toHaveLength(1);
         expect(toolMsg.toolCalls[0]).toMatchObject({
           id: 'tool-1',
@@ -319,12 +324,335 @@ describe('ClaudeJsonlParser', () => {
           isTask: false,
         });
 
-        // Tool result
-        const resultMsg = result.messages[2];
-        expect(resultMsg.isMeta).toBe(true);
-        expect(resultMsg.toolResults).toHaveLength(1);
-        expect(resultMsg.toolResults[0].toolCallId).toBe('tool-1');
-        expect(resultMsg.toolResults[0].isError).toBe(false);
+        // Tool result folded ONTO the assistant message (toolResults + a tool_result block).
+        expect(toolMsg.toolResults).toHaveLength(1);
+        expect(toolMsg.toolResults[0].toolCallId).toBe('tool-1');
+        expect(toolMsg.toolResults[0].isError).toBe(false);
+        expect(toolMsg.content.some((b) => b.type === 'tool_result')).toBe(true);
+
+        // No standalone user-role tool-result message remains.
+        expect(result.messages.some((m) => m.role === 'user' && m.toolResults.length > 0)).toBe(
+          false,
+        );
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('count parity: prompt → tool_use → tool_result → text yields messageCount 2 (one turn)', async () => {
+      // DoD example. The tool_result folds onto the tool_use assistant, and the FINAL text
+      // assistant (the continuation after the result) coalesces onto it too ⇒ 1 user + 1
+      // assistant = 2 turns. All tool calls/results + the final text land on the one assistant.
+      const finalAssistant = {
+        type: 'assistant',
+        uuid: 'asst-final',
+        parentUuid: 'user-tool-result',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:18.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'Done — here are the files.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 90, output_tokens: 20 },
+        },
+      };
+      const filePath = writeTempJsonl([
+        userEntry,
+        toolUseAssistantEntry,
+        toolResultUserEntry,
+        finalAssistant,
+      ]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        expect(result.metrics.messageCount).toBe(2);
+        expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+
+        // The coalesced assistant carries the tool call, the folded result, and the final text.
+        const asst = result.messages[1];
+        expect(asst.toolCalls.map((c) => c.id)).toEqual(['tool-1']);
+        expect(asst.toolResults.map((r) => r.toolCallId)).toEqual(['tool-1']);
+        const texts = asst.content.filter((b) => b.type === 'text').map((b) => b.text);
+        expect(texts).toContain('Done — here are the files.');
+        // Order preserved: tool_call before its result before the trailing text.
+        const kinds = asst.content.map((b) => b.type);
+        expect(kinds).toEqual(['tool_call', 'tool_result', 'text']);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('count parity: a sequential N=2 tool turn yields messageCount 2 (one coalesced assistant)', async () => {
+      const round2ToolUse = {
+        type: 'assistant',
+        uuid: 'asst-tool-2',
+        parentUuid: 'user-tool-result',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:17.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', id: 'tool-2', name: 'Bash', input: { command: 'pwd' } }],
+          stop_reason: 'tool_use',
+          usage: { input_tokens: 60, output_tokens: 10 },
+        },
+      };
+      const round2ToolResult = {
+        type: 'user',
+        uuid: 'user-tool-result-2',
+        parentUuid: 'asst-tool-2',
+        isSidechain: false,
+        isMeta: true,
+        timestamp: '2026-01-01T10:00:18.000Z',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-2', content: '/home', is_error: false },
+          ],
+        },
+      };
+      const finalAssistant = {
+        type: 'assistant',
+        uuid: 'asst-final',
+        parentUuid: 'user-tool-result-2',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:19.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'All done.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 90, output_tokens: 20 },
+        },
+      };
+      const filePath = writeTempJsonl([
+        userEntry,
+        toolUseAssistantEntry,
+        toolResultUserEntry,
+        round2ToolUse,
+        round2ToolResult,
+        finalAssistant,
+      ]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        // user + [tool_use#1 → tool_use#2 → final text, all coalesced + both results folded] = 2.
+        expect(result.metrics.messageCount).toBe(2);
+        expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+        // Both rounds' calls and results live on the single coalesced assistant, in order.
+        const asst = result.messages[1];
+        expect(asst.toolCalls.map((c) => c.id)).toEqual(['tool-1', 'tool-2']);
+        expect(asst.toolResults.map((r) => r.toolCallId)).toEqual(['tool-1', 'tool-2']);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('sums usage across the coalesced entries onto the single assistant message', async () => {
+      const finalAssistant = {
+        type: 'assistant',
+        uuid: 'asst-final',
+        parentUuid: 'user-tool-result',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:18.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'Done.' }],
+          stop_reason: 'end_turn',
+          usage: {
+            input_tokens: 90,
+            output_tokens: 20,
+            cache_read_input_tokens: 5,
+            cache_creation_input_tokens: 1,
+          },
+        },
+      };
+      const filePath = writeTempJsonl([
+        userEntry,
+        toolUseAssistantEntry, // usage: 150 / 30 / 0 / 0
+        toolResultUserEntry,
+        finalAssistant, // usage: 90 / 20 / 5 / 1
+      ]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        // Merged assistant usage = sum of the two coalesced assistant entries.
+        expect(result.messages[1].usage).toEqual({
+          input: 240,
+          output: 50,
+          cacheRead: 5,
+          cacheCreation: 1,
+        });
+        // Session totals are unaffected (they accumulate per entry).
+        expect(result.metrics.inputTokens).toBe(240);
+        expect(result.metrics.outputTokens).toBe(50);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('over-merge guard: a post-end_turn assistant with no user between starts a NEW turn', async () => {
+      // toolUseAssistantEntry has stop_reason 'tool_use'; assistantEntry has 'end_turn'. After
+      // an end_turn, a following assistant (no user between) is a separate turn → not coalesced.
+      const afterEndTurn = {
+        type: 'assistant',
+        uuid: 'asst-after-end',
+        parentUuid: 'asst-1',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:30.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'A separate continuation turn.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      };
+      // userEntry → assistantEntry(end_turn) → afterEndTurn(no user between).
+      const filePath = writeTempJsonl([userEntry, assistantEntry, afterEndTurn]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        expect(result.metrics.messageCount).toBe(3);
+        expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('over-merge guard: a tool_result after an end_turn assistant does NOT fold across the boundary', async () => {
+      // Defensive (malformed input): a tool_result only ever follows a 'tool_use' assistant in
+      // well-formed transcripts, never an 'end_turn' one. If one appears after a COMPLETED turn,
+      // the end_turn guard on the tool_result fold (mirroring the continuation fold) prevents it
+      // from being glued onto the unrelated completed turn — it stays its own message.
+      const filePath = writeTempJsonl([userEntry, assistantEntry, toolResultUserEntry]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        // user + assistant(end_turn) + orphan tool_result = 3 (NOT folded into the 2nd).
+        expect(result.metrics.messageCount).toBe(3);
+        expect(result.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+        // The completed assistant turn is untouched — no tool_result leaked onto it.
+        expect(result.messages[1].toolResults).toHaveLength(0);
+        expect(result.messages[2].toolResults).toHaveLength(1);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('over-merge guard: a sidechain assistant does NOT coalesce onto a main-thread turn', async () => {
+      // toolUseAssistantEntry (main, tool_use) then a sidechain assistant: sidechain mismatch
+      // breaks the chain even though the preceding stop_reason is not end_turn.
+      const filePath = writeTempJsonl([userEntry, toolUseAssistantEntry, sidechainEntry]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        expect(result.metrics.messageCount).toBe(3);
+        expect(result.messages[2].isSidechain).toBe(true);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('over-merge guard: a compact summary between assistants starts a NEW turn', async () => {
+      // toolUseAssistantEntry (tool_use, would otherwise allow a continuation fold) → compact
+      // summary (user) → postCompactionAssistant. The compact summary nulls the fold target.
+      const filePath = writeTempJsonl([
+        userEntry,
+        toolUseAssistantEntry,
+        compactSummaryEntry,
+        postCompactionAssistant,
+      ]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        // user + tool_use assistant + compact summary + post-compaction assistant = 4.
+        expect(result.metrics.messageCount).toBe(4);
+        expect(result.messages.map((m) => m.role)).toEqual([
+          'user',
+          'assistant',
+          'user',
+          'assistant',
+        ]);
+        expect(result.messages[2].isCompactSummary).toBe(true);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('over-merge guard: a real user prompt between assistants starts a NEW turn', async () => {
+      const secondPrompt = {
+        type: 'user',
+        uuid: 'user-2',
+        parentUuid: 'asst-tool',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:40.000Z',
+        message: { role: 'user', content: 'Another question' },
+      };
+      const secondAssistant = {
+        type: 'assistant',
+        uuid: 'asst-2nd',
+        parentUuid: 'user-2',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:45.000Z',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'Second answer.' }],
+          stop_reason: 'end_turn',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      };
+      // userEntry → toolUseAssistantEntry(tool_use) → real user → assistant.
+      const filePath = writeTempJsonl([
+        userEntry,
+        toolUseAssistantEntry,
+        secondPrompt,
+        secondAssistant,
+      ]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        expect(result.metrics.messageCount).toBe(4);
+        expect(result.messages.map((m) => m.role)).toEqual([
+          'user',
+          'assistant',
+          'user',
+          'assistant',
+        ]);
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('does NOT fold a user entry that carries real text alongside a tool_result', async () => {
+      const mixedUserEntry = {
+        type: 'user',
+        uuid: 'user-mixed',
+        parentUuid: 'asst-tool',
+        isSidechain: false,
+        timestamp: '2026-01-01T10:00:16.000Z',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 'tool-1', content: 'ok', is_error: false },
+            { type: 'text', text: 'Thanks, now do the next thing.' },
+          ],
+        },
+      };
+      const filePath = writeTempJsonl([userEntry, toolUseAssistantEntry, mixedUserEntry]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        // Real user text ⇒ NOT folded; stays its own message (3 total).
+        expect(result.metrics.messageCount).toBe(3);
+        expect(result.messages[2].role).toBe('user');
+      } finally {
+        cleanup(filePath);
+      }
+    });
+
+    it('fallback: a tool_result with no preceding assistant is preserved as its own message', async () => {
+      // Mirrors the watcher slice that starts mid-turn / a malformed transcript.
+      const filePath = writeTempJsonl([toolResultUserEntry]);
+      try {
+        const result = await parseClaudeJsonl(filePath);
+        expect(result.messages).toHaveLength(1);
+        expect(result.messages[0].role).toBe('user');
+        expect(result.messages[0].toolResults).toHaveLength(1);
       } finally {
         cleanup(filePath);
       }

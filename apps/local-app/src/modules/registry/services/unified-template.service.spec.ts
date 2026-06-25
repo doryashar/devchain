@@ -152,7 +152,7 @@ describe('UnifiedTemplateService', () => {
       });
     });
 
-    it('should sort templates by name', () => {
+    it('should fall back to alphabetical when no order field present', () => {
       mockReaddirSyncFn.mockReturnValue(['zebra-template.json', 'alpha-template.json']);
       mockCacheService.listCached.mockReturnValue([]);
 
@@ -160,6 +160,70 @@ describe('UnifiedTemplateService', () => {
 
       expect(result[0].slug).toBe('alpha-template');
       expect(result[1].slug).toBe('zebra-template');
+    });
+
+    it('should sort ordered templates by order ascending regardless of name', () => {
+      // z-template (order:10) precedes a-template (order:20) despite alphabetical ordering
+      mockReaddirSyncFn.mockReturnValue(['z-template.json', 'a-template.json']);
+      mockReadFileSyncFn
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Z Template', order: 10 } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'A Template', order: 20 } }));
+      mockCacheService.listCached.mockReturnValue([]);
+
+      const result = service.listTemplates();
+
+      expect(result[0].name).toBe('Z Template');
+      expect(result[1].name).toBe('A Template');
+    });
+
+    it('should place ordered templates before unordered templates', () => {
+      // has-order (order:999) comes before no-order (undefined) despite higher numeric value
+      mockReaddirSyncFn.mockReturnValue(['no-order.json', 'has-order.json']);
+      mockReadFileSyncFn
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'No Order' } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Has Order', order: 999 } }));
+      mockCacheService.listCached.mockReturnValue([]);
+
+      const result = service.listTemplates();
+
+      expect(result[0].name).toBe('Has Order');
+      expect(result[1].name).toBe('No Order');
+    });
+
+    it('should use name as tiebreaker when two templates share the same order', () => {
+      mockReaddirSyncFn.mockReturnValue(['beta.json', 'alpha.json']);
+      mockReadFileSyncFn
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Beta Template', order: 5 } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Alpha Template', order: 5 } }));
+      mockCacheService.listCached.mockReturnValue([]);
+
+      const result = service.listTemplates();
+
+      expect(result[0].name).toBe('Alpha Template');
+      expect(result[1].name).toBe('Beta Template');
+    });
+
+    it('should sort mixed list: ordered-first then unordered-alphabetical', () => {
+      mockReaddirSyncFn.mockReturnValue([
+        'unordered-b.json',
+        'ordered-low.json',
+        'unordered-a.json',
+        'ordered-high.json',
+      ]);
+      // readdirSync order determines readFileSync call order
+      mockReadFileSyncFn
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Beta Unordered' } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Low Order', order: 1 } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'Alpha Unordered' } }))
+        .mockReturnValueOnce(JSON.stringify({ _manifest: { name: 'High Order', order: 2 } }));
+      mockCacheService.listCached.mockReturnValue([]);
+
+      const result = service.listTemplates();
+
+      expect(result[0].name).toBe('Low Order');
+      expect(result[1].name).toBe('High Order');
+      expect(result[2].name).toBe('Alpha Unordered');
+      expect(result[3].name).toBe('Beta Unordered');
     });
 
     it('should convert slug to title case correctly', () => {

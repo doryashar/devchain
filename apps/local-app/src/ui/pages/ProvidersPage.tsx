@@ -46,6 +46,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/ui/lib/utils';
 import { EnvEditor, type EnvEditorHandle } from '@/ui/components/EnvEditor';
+import { ProviderEnvScopePopover } from '@/ui/components/ProviderEnvScopePopover';
 import { fetchPreflightChecks } from '@/ui/lib/preflight';
 import { providerModelQueryKeys } from '@/ui/lib/provider-model-query-keys';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
@@ -69,6 +70,7 @@ interface Provider {
   autoCompactThreshold1m: number | null;
   oneMillionContextEnabled: boolean;
   env: Record<string, string> | null;
+  envScopes: Record<string, string[]>;
   mcpConfigured: boolean;
   mcpEndpoint: string | null;
   mcpRegisteredAt: string | null;
@@ -139,6 +141,7 @@ async function updateProvider(
     autoCompactThreshold1m?: number | null;
     oneMillionContextEnabled?: boolean;
     env?: Record<string, string> | null;
+    envScopes?: Record<string, string[]>;
   },
 ) {
   const res = await fetch(`/api/providers/${id}`, {
@@ -491,6 +494,7 @@ export function ProvidersPage() {
     autoCompactThreshold1m: '',
     oneMillionContextEnabled: false,
     env: {} as Record<string, string>,
+    envScopes: {} as Record<string, string[]>,
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [formErrorField, setFormErrorField] = useState<'binPath' | 'autoCompactThreshold' | null>(
@@ -507,6 +511,20 @@ export function ProvidersPage() {
     queryKey: ['providers'],
     queryFn: fetchProviders,
   });
+
+  const { data: allProjectsData } = useQuery({
+    queryKey: ['projects', 'all'],
+    queryFn: () => fetch('/api/projects?limit=10000').then((r) => r.json()),
+    staleTime: 60000,
+  });
+  const allProjectsForScope: Array<{ id: string; name: string }> = useMemo(
+    () =>
+      (allProjectsData?.items ?? []).map((p: { id: string; name: string }) => ({
+        id: p.id,
+        name: p.name,
+      })),
+    [allProjectsData],
+  );
 
   const {
     data: preflightResult,
@@ -558,6 +576,7 @@ export function ProvidersPage() {
         autoCompactThreshold1m: '',
         oneMillionContextEnabled: false,
         env: {},
+        envScopes: {},
       });
       setFormError(null);
       setFormErrorField(null);
@@ -609,6 +628,7 @@ export function ProvidersPage() {
         autoCompactThreshold1m?: number | null;
         oneMillionContextEnabled?: boolean;
         env?: Record<string, string> | null;
+        envScopes?: Record<string, string[]>;
       };
     }) => updateProvider(id, data),
     onMutate: async ({ id, data }) => {
@@ -635,6 +655,7 @@ export function ProvidersPage() {
         autoCompactThreshold1m: '',
         oneMillionContextEnabled: false,
         env: {},
+        envScopes: {},
       });
       setFormError(null);
       setFormErrorField(null);
@@ -842,6 +863,7 @@ export function ProvidersPage() {
           binPath,
           autoCompactThreshold,
           env: Object.keys(env).length > 0 ? env : null,
+          envScopes: formData.envScopes,
           ...(isClaude
             ? {
                 oneMillionContextEnabled: formData.oneMillionContextEnabled,
@@ -877,6 +899,7 @@ export function ProvidersPage() {
       autoCompactThreshold1m: provider.autoCompactThreshold1m?.toString() ?? '',
       oneMillionContextEnabled: provider.oneMillionContextEnabled ?? false,
       env: provider.env ?? {},
+      envScopes: provider.envScopes ?? {},
     });
     setProbeStatus(provider.oneMillionContextEnabled ? 'supported' : 'idle');
     // derive provider type from existing provider
@@ -929,6 +952,7 @@ export function ProvidersPage() {
       autoCompactThreshold1m: '',
       oneMillionContextEnabled: false,
       env: {},
+      envScopes: {},
     });
     setProviderType(initialType);
     setBinPathTouched(false);
@@ -1191,6 +1215,7 @@ export function ProvidersPage() {
               autoCompactThreshold1m: '',
               oneMillionContextEnabled: false,
               env: {},
+              envScopes: {},
             });
             setFormError(null);
             setFormErrorField(null);
@@ -1470,7 +1495,35 @@ export function ProvidersPage() {
               <EnvEditor
                 ref={envEditorRef}
                 env={formData.env}
-                onChange={(env) => setFormData((prev) => ({ ...prev, env }))}
+                onChange={(env) =>
+                  setFormData((prev) => {
+                    const prevKeys = new Set(Object.keys(prev.env));
+                    const nextKeys = new Set(Object.keys(env));
+                    const removed = [...prevKeys].filter((k) => !nextKeys.has(k));
+                    if (removed.length === 0) return { ...prev, env };
+                    const envScopes = { ...prev.envScopes };
+                    removed.forEach((k) => delete envScopes[k]);
+                    return { ...prev, env, envScopes };
+                  })
+                }
+                renderRowExtra={(key, _value) => (
+                  <ProviderEnvScopePopover
+                    envKey={key}
+                    selectedProjectIds={formData.envScopes[key] ?? []}
+                    allProjects={allProjectsForScope}
+                    onChange={(ids) =>
+                      setFormData((prev) => {
+                        const envScopes = { ...prev.envScopes };
+                        if (ids.length === 0) {
+                          delete envScopes[key];
+                        } else {
+                          envScopes[key] = ids;
+                        }
+                        return { ...prev, envScopes };
+                      })
+                    }
+                  />
+                )}
               />
             </div>
 
@@ -1490,6 +1543,7 @@ export function ProvidersPage() {
                     autoCompactThreshold1m: '',
                     oneMillionContextEnabled: false,
                     env: {},
+                    envScopes: {},
                   });
                   setProviderType(initialType);
                   setBinPathTouched(false);

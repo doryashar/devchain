@@ -11,7 +11,7 @@ import { TerminalIOService } from './terminal-io/terminal-io.service';
 import { SessionsService } from '../../sessions/services/sessions.service';
 import { createEnvelope, TerminalSeedPayload } from '../dtos/ws-envelope.dto';
 import { TerminalSessionRegistry } from './terminal-session/terminal-session-registry';
-import { normalizeLineEndings } from '../utils/normalize-line-endings';
+import { normalizeLineEndings, stripFinalLineEnding } from '../utils/normalize-line-endings';
 
 const logger = createLogger('TerminalSeedService');
 
@@ -276,9 +276,9 @@ export class TerminalSeedService {
         // Use cached capture if available (2s TTL)
         snapshot = await this.getCachedCapture(sessionId, session.tmuxSessionId, scrollbackLines);
 
-        // Strip trailing newlines and capture cursor position for metadata
+        // Strip tmux capture-pane's final separator and capture cursor position for metadata.
         if (snapshot && snapshot.length > 0) {
-          snapshot = snapshot.replace(/(\r?\n)+$/, '');
+          snapshot = stripFinalLineEnding(snapshot);
 
           const truncateResult = this.truncateToMaxBytes(snapshot, maxBytes);
           snapshot = truncateResult.truncated;

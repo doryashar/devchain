@@ -205,6 +205,7 @@ export class TranscriptPersistenceListener {
         projectId,
         transcriptPath: normalizedPath,
         providerName: 'claude',
+        providerSessionId: claudeSessionId ?? undefined,
       });
     }
   }
@@ -252,7 +253,37 @@ export class TranscriptPersistenceListener {
         return;
       }
 
-      const files = await adapter.discoverSessionFile({ projectRoot });
+      // Only DB-backed adapters need the launch timestamp + session id (for SQL
+      // window-matching); file adapters keep the original `{ projectRoot }` shape
+      // and avoid the extra started_at lookup.
+      const discoveryContext =
+        adapter.sourceKind === 'db'
+          ? {
+              projectRoot,
+              sessionStartedAt: this.getSessionStartedAt(sessionId) ?? undefined,
+              sessionId,
+            }
+          : { projectRoot };
+      const files = await adapter.discoverSessionFile(discoveryContext);
+
+      // DB-backed sources (e.g. OpenCode): one container holds many sessions, so
+      // discovery is the adapter's structured SQL match — NOT JSONL head-reading.
+      // Dedupe by (path, providerSessionId) with an ambiguity guard.
+      if (adapter.sourceKind === 'db') {
+        const stop = await this.handleDbBackedDiscovery(
+          files,
+          sessionId,
+          agentId,
+          projectId,
+          providerName,
+          attempt,
+          isFinalAttempt,
+        );
+        if (stop) return;
+        if (!isFinalAttempt) await this.delayBeforeRetry(attempt);
+        continue;
+      }
+
       if (files.length > 0) {
         const provAdapter = this.resolveProviderAdapter(providerName);
         if (
@@ -454,6 +485,100 @@ export class TranscriptPersistenceListener {
     };
   }
 
+  /**
+   * DB-backed discovery (e.g. OpenCode): the adapter already returned SQL-matched
+   * candidates (each a `(dbPath, ses_…)` pair). Exclude `ses_` ids already owned
+   * by other sessions, then:
+   * - exactly one unassigned → persist it.
+   * - more than one → ambiguous: warn and retry (never blind newest-pick).
+   * - none → retry.
+   * Returns `true` when the retry loop should stop (success or give-up).
+   */
+  private async handleDbBackedDiscovery(
+    files: SessionFileInfo[],
+    sessionId: string,
+    agentId: string,
+    projectId: string,
+    providerName: string,
+    attempt: number,
+    isFinalAttempt: boolean,
+  ): Promise<boolean> {
+    const candidates = this.excludeAssignedDbCandidates(files, sessionId);
+
+    if (candidates.length === 1) {
+      const outcome = await this.persistDiscoveredPath(
+        sessionId,
+        agentId,
+        projectId,
+        candidates[0],
+        providerName,
+      );
+      return this.shouldStopAfterPersistOutcome(outcome, isFinalAttempt, attempt);
+    }
+
+    if (candidates.length > 1) {
+      this.logger.warn(
+        { sessionId, providerName, candidateCount: candidates.length, attempt },
+        'Ambiguous DB-backed session match (multiple unassigned candidates) — retrying instead of guessing',
+      );
+      if (isFinalAttempt) {
+        this.logger.warn(
+          { sessionId, providerName },
+          'DB-backed discovery still ambiguous after final attempt — left unassigned',
+        );
+        return true;
+      }
+      return false;
+    }
+
+    if (isFinalAttempt) {
+      this.logger.warn(
+        { sessionId, providerName, attempt },
+        'No DB-backed session candidate found after final discovery attempt',
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Exclude candidates whose `(transcriptPath, providerSessionId)` is already
+   * owned by another session. The shared container path alone does NOT exclude a
+   * candidate (that's what distinguishes DB dedupe from the path-only file rule).
+   */
+  private excludeAssignedDbCandidates(
+    files: SessionFileInfo[],
+    sessionId: string,
+  ): SessionFileInfo[] {
+    if (files.length === 0) return files;
+
+    const rows = this.sqlite
+      .prepare(
+        `SELECT transcript_path, provider_session_id FROM sessions
+         WHERE provider_session_id IS NOT NULL AND id != ?`,
+      )
+      .all(sessionId) as { transcript_path: string | null; provider_session_id: string }[];
+
+    const taken = new Set<string>();
+    for (const row of rows) {
+      if (row.transcript_path) {
+        taken.add(this.dbCandidateKey(row.transcript_path, row.provider_session_id));
+      }
+    }
+
+    return files.filter(
+      (file) =>
+        !(
+          file.providerSessionId &&
+          taken.has(this.dbCandidateKey(file.filePath, file.providerSessionId))
+        ),
+    );
+  }
+
+  private dbCandidateKey(transcriptPath: string, providerSessionId: string): string {
+    return `${this.normalizePathForCompare(transcriptPath)}\0${providerSessionId}`;
+  }
+
   private async persistDiscoveredPath(
     sessionId: string,
     agentId: string,
@@ -502,6 +627,28 @@ export class TranscriptPersistenceListener {
       }
 
       if (!row.transcript_path) {
+        // Uniqueness guard on (path, providerSessionId): for DB-backed sources
+        // many sessions share one container path, so two concurrent discoveries
+        // could otherwise bind the same `ses_…`. No-op for file adapters whose
+        // candidates carry no providerSessionId (NULL → path-only semantics).
+        if (providerSessionId) {
+          const conflict = this.sqlite
+            .prepare(
+              `SELECT id FROM sessions
+               WHERE id != ? AND provider_session_id = ? AND transcript_path = ?`,
+            )
+            .get(sessionId, providerSessionId, normalizedPath) as { id: string } | undefined;
+          if (conflict) {
+            this.sqlite.prepare('COMMIT').run();
+            transactionOpen = false;
+            this.logger.warn(
+              { sessionId, conflictingSessionId: conflict.id, providerSessionId, providerName },
+              'Provider session id already bound to another session — skipping',
+            );
+            return { kind: 'skipped', sessionId, reason: 'providerSessionIdTaken' };
+          }
+        }
+
         this.sqlite
           .prepare(
             `UPDATE sessions
@@ -524,6 +671,7 @@ export class TranscriptPersistenceListener {
             projectId,
             transcriptPath: normalizedPath,
             providerName,
+            providerSessionId: providerSessionId ?? undefined,
           });
           return { kind: 'persisted', sessionId };
         }
@@ -538,6 +686,7 @@ export class TranscriptPersistenceListener {
           projectId,
           transcriptPath: normalizedPath,
           providerName,
+          providerSessionId: providerSessionId ?? undefined,
         });
         return { kind: 'persistedPathOnly', sessionId };
       }

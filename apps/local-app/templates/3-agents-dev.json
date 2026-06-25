@@ -2,8 +2,9 @@
   "_manifest": {
     "slug": "3-agents-dev",
     "name": "3 Agents Development Flow",
+    "order": 20,
     "description": "A streamlined 3-agent development workflow for software delivery:\n\n1. Planning — A Brainstormer agent collaborates with the user to refine requirements into an approved master plan, then breaks it down into epics and tasks.\n2. Execution — A Coder agent implements all tasks sequentially, self-managing the workflow and triggering code review when all work is complete.\n3. Code Review — A Code Reviewer audits the completed work against architectural standards, generating findings that feed back into new remediation tasks if needed.\n\nSupported agents: claude, codex, gemini, glm",
-    "version": "1.0.12",
+    "version": "1.0.13",
     "category": "development",
     "tags": [
       "development",
@@ -16,10 +17,10 @@
     "authorName": "Devchain",
     "changelog": "",
     "minDevchainVersion": "0.11.0",
-    "publishedAt": "2026-05-03T22:19:59.774Z"
+    "publishedAt": "2026-06-23T19:47:53.528Z"
   },
   "version": 1,
-  "exportedAt": "2026-05-03T22:19:59.775Z",
+  "exportedAt": "2026-06-23T19:47:53.529Z",
   "prompts": [
     {
       "id": "d2b44b2d-aa82-4483-b641-b7206d461c83",
@@ -156,14 +157,6 @@
           "position": 1
         },
         {
-          "name": "codex-xhigh",
-          "providerName": "codex",
-          "description": null,
-          "options": "--model=gpt-5.3-codex --config model_reasoning_effort=\"xhigh\" --dangerously-bypass-approvals-and-sandbox",
-          "env": null,
-          "position": 2
-        },
-        {
           "name": "gemini3",
           "providerName": "gemini",
           "description": null,
@@ -222,14 +215,6 @@
           "position": 1
         },
         {
-          "name": "codex-high",
-          "providerName": "codex",
-          "description": null,
-          "options": "--model=gpt-5.3-codex --config model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox",
-          "env": null,
-          "position": 2
-        },
-        {
           "name": "glm",
           "providerName": "claude",
           "description": null,
@@ -238,9 +223,27 @@
             "ANTHROPIC_AUTH_TOKEN": "***",
             "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
             "API_TIMEOUT_MS": "3000000",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.1"
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2[1m]",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "450000",
+            "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "95"
           },
           "position": 3
+        },
+        {
+          "name": "gpt-high",
+          "providerName": "codex",
+          "description": "--model=gpt-5.5 --config model_reasoning_effort=\"high\" --dangerously-bypass-approvals-and-sandbox",
+          "options": null,
+          "env": null,
+          "position": 4
+        },
+        {
+          "name": "opencode",
+          "providerName": "opencode",
+          "description": null,
+          "options": null,
+          "env": null,
+          "position": 5
         }
       ]
     }
@@ -346,11 +349,11 @@
   "providerSettings": [
     {
       "name": "claude",
-      "autoCompactThreshold": 95,
+      "autoCompactThreshold": 94,
       "autoCompactThreshold1m": 50,
       "oneMillionContextEnabled": true,
       "env": {
-        "CLAUDE_CODE_NO_FLICKER": "1"
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"
       }
     }
   ],
@@ -367,7 +370,8 @@
         "google/gemini-3.1-pro-preview",
         "deepseek/deepseek-chat",
         "deepseek/deepseek-reasoner",
-        "zai-coding-plan/glm-5.1"
+        "zai-coding-plan/glm-5.1",
+        "zai-coding-plan/glm-5.2"
       ]
     },
     {
@@ -765,7 +769,7 @@
         },
         {
           "agentName": "Coder",
-          "providerConfigName": "codex-high",
+          "providerConfigName": "gpt-high",
           "modelOverride": null
         },
         {
@@ -807,7 +811,7 @@
         },
         {
           "agentName": "Coder",
-          "providerConfigName": "codex-high",
+          "providerConfigName": "gpt-high",
           "modelOverride": null
         },
         {
@@ -828,7 +832,7 @@
         },
         {
           "agentName": "Coder",
-          "providerConfigName": "codex-high",
+          "providerConfigName": "gpt-high",
           "modelOverride": null
         },
         {
@@ -859,5 +863,6 @@
         }
       ]
     }
-  ]
+  ],
+  "scheduledEpics": []
 }

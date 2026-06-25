@@ -203,7 +203,8 @@
       "^react-dom$": "<rootDir>/../node_modules/react-dom",
       "^react/jsx-runtime$": "<rootDir>/../node_modules/react/jsx-runtime.js",
       "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js",
-      "\\.(css|less|scss|sass)$": "identity-obj-proxy"
+      "\\.(css|less|scss|sass)$": "identity-obj-proxy",
+      "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "projects": [
       {
@@ -231,7 +232,8 @@
           "^react$": "<rootDir>/../node_modules/react",
           "^react-dom$": "<rootDir>/../node_modules/react-dom",
           "^react/jsx-runtime$": "<rootDir>/../node_modules/react/jsx-runtime.js",
-          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js"
+          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js",
+          "^(\\.{1,2}/.*)\\.js$": "$1"
         }
       },
       {
@@ -254,7 +256,8 @@
           "^react$": "<rootDir>/../node_modules/react",
           "^react-dom$": "<rootDir>/../node_modules/react-dom",
           "^react/jsx-runtime$": "<rootDir>/../node_modules/react/jsx-runtime.js",
-          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js"
+          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js",
+          "^(\\.{1,2}/.*)\\.js$": "$1"
         }
       },
       {
@@ -278,7 +281,8 @@
           "^react/jsx-runtime$": "<rootDir>/../node_modules/react/jsx-runtime.js",
           "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js",
           "\\.(css|less|scss|sass)$": "identity-obj-proxy",
-          "\\?raw$": "<rootDir>/../test/mocks/raw-file.ts"
+          "\\?raw$": "<rootDir>/../test/mocks/raw-file.ts",
+          "^(\\.{1,2}/.*)\\.js$": "$1"
         }
       },
       {
@@ -310,7 +314,8 @@
           "^react$": "<rootDir>/../node_modules/react",
           "^react-dom$": "<rootDir>/../node_modules/react-dom",
           "^react/jsx-runtime$": "<rootDir>/../node_modules/react/jsx-runtime.js",
-          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js"
+          "^react/jsx-dev-runtime$": "<rootDir>/../node_modules/react/jsx-dev-runtime.js",
+          "^(\\.{1,2}/.*)\\.js$": "$1"
         }
       }
     ]

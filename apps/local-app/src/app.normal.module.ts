@@ -35,6 +35,7 @@ import { DataSeederModule } from './modules/seeders/seeders.module';
 import { CodebaseOverviewAnalyzerModule } from './modules/codebase-overview-analyzer/codebase-overview-analyzer.module';
 import { CloudModule } from './modules/cloud/cloud.module';
 import { CloudTunnelModule } from './modules/cloud-tunnel/cloud-tunnel.module';
+import { E2eeModule } from './modules/e2ee/e2ee.module';
 import { AgentMessageDeliveryModule } from './modules/agent-message-delivery/agent-message-delivery.module';
 import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
 import { EventsCoreModule } from './modules/events/events-core.module';
@@ -79,6 +80,7 @@ import { AllWsExceptionsFilter } from './common/filters/ws-exception.filter';
     CodebaseOverviewAnalyzerModule,
     CloudModule,
     CloudTunnelModule,
+    E2eeModule,
     AgentMessageDeliveryModule,
   ],
   controllers: [],

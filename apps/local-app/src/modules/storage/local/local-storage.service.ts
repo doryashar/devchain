@@ -116,6 +116,7 @@ import { StatusStorageDelegate } from './delegates/status.delegate';
 import { SubscriberStorageDelegate } from './delegates/subscriber.delegate';
 import { TagStorageDelegate } from './delegates/tag.delegate';
 import { ScheduledEpicStorageDelegate } from './delegates/scheduled-epic.delegate';
+import { SessionStorageDelegate } from './delegates/session.delegate';
 import { WatcherStorageDelegate } from './delegates/watcher.delegate';
 
 const logger = createLogger('LocalStorageService');
@@ -148,6 +149,7 @@ export class LocalStorageService implements StorageService {
   private readonly reviewDelegate: ReviewStorageDelegate;
   private readonly providerModelDelegate: ProviderModelStorageDelegate;
   private readonly scheduledEpicDelegate: ScheduledEpicStorageDelegate;
+  private readonly sessionDelegate: SessionStorageDelegate;
 
   constructor(@Inject(DB_CONNECTION) private readonly db: BetterSQLite3Database) {
     const context = createStorageDelegateContext(this.db);
@@ -208,6 +210,7 @@ export class LocalStorageService implements StorageService {
       getReviewComment: (id) => this.getReviewComment(id),
     });
     this.scheduledEpicDelegate = new ScheduledEpicStorageDelegate(context);
+    this.sessionDelegate = new SessionStorageDelegate(context);
     logger.info('LocalStorageService initialized');
   }
 
@@ -384,6 +387,10 @@ export class LocalStorageService implements StorageService {
     return this.epicDelegate.deleteEpicComment(id);
   }
 
+  async deleteEpicCommentScoped(epicId: string, commentId: string): Promise<boolean> {
+    return this.epicDelegate.deleteEpicCommentScoped(epicId, commentId);
+  }
+
   async getEpicsByIdPrefix(
     projectId: string,
     prefix: string,
@@ -504,6 +511,25 @@ export class LocalStorageService implements StorageService {
 
   async deleteProvider(id: string): Promise<void> {
     return this.providerDelegate.deleteProvider(id);
+  }
+
+  getProviderEnvForProject(providerId: string, projectId: string): Record<string, string> | null {
+    return this.providerDelegate.getProviderEnvForProject(providerId, projectId);
+  }
+
+  listEnvScopesByProviderIds(providerIds: string[]): Map<string, Record<string, string[]>> {
+    return this.providerDelegate.listEnvScopesByProviderIds(providerIds);
+  }
+
+  async updateProviderWithScopes(
+    id: string,
+    data: UpdateProvider,
+    envScopes: Record<string, string[]> | undefined,
+    currentEnvKeys: string[],
+  ): Promise<Provider> {
+    return Promise.resolve(
+      this.providerDelegate.updateProviderWithScopes(id, data, envScopes, currentEnvKeys),
+    );
   }
 
   async getProviderMcpMetadata(id: string): Promise<ProviderMcpMetadata> {
@@ -1002,5 +1028,20 @@ export class LocalStorageService implements StorageService {
 
   async claimScheduledEpicRun(runId: string): Promise<ClaimRunResult> {
     return this.scheduledEpicDelegate.claimScheduledEpicRun(runId);
+  }
+
+  // ============================================
+  // SESSION PARK-AND-REBIND
+  // ============================================
+
+  async parkSessionsFromAgents(agentIds: string[]): Promise<Map<string, string[]>> {
+    return this.sessionDelegate.parkSessionsFromAgents(agentIds);
+  }
+
+  async applySessionPlan(
+    toReassign: Array<{ sessionId: string; newAgentId: string }>,
+    toDelete: string[],
+  ): Promise<void> {
+    return this.sessionDelegate.applySessionPlan(toReassign, toDelete);
   }
 }

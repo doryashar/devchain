@@ -1,13 +1,25 @@
 {
   "name": "devchain-cli",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "AI driven development platform",
-  "homepage": "https://devchain.twitechlab.com/",
+  "homepage": "https://devchain.cc/",
   "repository": {
     "type": "git",
     "url": "https://github.com/twitech-lab/devchain.git"
   },
   "changelog": {
+    "0.15.0": [
+      "Details: https://devchain.cc/releases/0.15.0/",
+      "",
+      "DevChain mobile app (open beta on iOS TestFlight and Android): chat with agent teams, answer AskUserQuestion prompts, manage agents, session history, live tmux viewport, and board epics with assignment and comments",
+      "End-to-end encryption between desktop and mobile: RPC, push, and viewport lanes sealed with X25519 + XChaCha20-Poly1305, so the cloud bridge only relays ciphertext it cannot read; paired-devices view with safety numbers, fail-closed receive, and device-bound refresh tokens",
+      "Mobile push notifications with smart notifications, quiet hours, push categories, and per-project forwarding (iOS via APNs)"
+    ],
+    "0.14.1": [
+      "Terminal: stabilize seed rendering and viewport alignment",
+      "Teams: template updates",
+      "Bug fixes: preset cleanup after agent deletion"
+    ],
     "0.14.0": [
       "Scheduled epics: storage, runner, API events, automation UI, and form portability",
       "MCP: epic status returned as label; reduced write response payloads",
@@ -47,7 +59,7 @@
       "Fix migration ordering"
     ],
     "0.12.0": [
-      "Details: https://devchain.twitechlab.com/releases/0.12.0/",
+      "Details: https://devchain.cc/releases/0.12.0/",
       "",
       "Agent Teams: group agents into named teams with team leads that do real management (Planning + Builders shipped in the new teams-dev template)",
       "Auto-scaling Builders: Epic Manager picks the right model per task, reuses idle workers, and adds Coders as workload grows — within capacity caps",
@@ -88,7 +100,7 @@
       "Updated model pricing"
     ],
     "0.11.0": [
-      "Details: https://devchain.twitechlab.com/releases/0.11.0/",
+      "Details: https://devchain.cc/releases/0.11.0/",
       "",
       "Session Reader: full transcript viewer for active sessions with token usage, cost tracking, AI turn grouping, and hotspot detection",
       "Context tracking: real-time context window progress bars per agent with token tooltips",
@@ -118,7 +130,7 @@
       "Update README with worktrees, container isolation, and skills documentation"
     ],
     "0.10.0": [
-      "Details: https://devchain.twitechlab.com/releases/0.10.0/",
+      "Details: https://devchain.cc/releases/0.10.0/",
       "",
       "Worktrees: launch isolated agent environments as Docker containers or local processes, each with their own branch, terminal, and chat",
       "Container isolation: auto-provision worktree image from GHCR, run agents as non-root with full git identity and Docker CLI access",
@@ -136,7 +148,7 @@
       "Community skill sources: add any GitHub repo as a skill source via UI"
     ],
     "0.9.0": [
-      "Details: https://devchain.twitechlab.com/releases/0.9.0/",
+      "Details: https://devchain.cc/releases/0.9.0/",
       "",
       "Skills management module with sync engine and per-project controls",
       "Five skill source adapters: Anthropic, OpenAI, Vercel, Trail of Bits, Microsoft",
@@ -168,7 +180,7 @@
       "Tab-independent project selection with hybrid storage",
       "Activity signal filtering to prevent spurious agent busy states",
       "Session fixes: duplicate agent sessions race condition, nested lock deadlock, timing delays for slower CLI providers",
-      "Details: https://devchain.twitechlab.com/releases/0.8.0/"
+      "Details: https://devchain.cc/releases/0.8.0/"
     ],
     "0.7.1": [
       "Template updates for Claude Code v2 compatibility"
@@ -300,6 +312,9 @@
     "@fastify/static": "^7.0.4",
     "@modelcontextprotocol/sdk": "1.20.1",
     "@multiavatar/multiavatar": "1.0.7",
+    "@noble/ciphers": "^1.3.0",
+    "@noble/curves": "^1.9.7",
+    "@noble/hashes": "^1.8.0",
     "@nestjs/common": "^10.3.3",
     "@nestjs/core": "^10.3.3",
     "@nestjs/event-emitter": "3.0.1",
@@ -361,6 +376,7 @@
     "pino-http": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "prebuild-install": "^7.1.1",
+    "qrcode.react": "4.2.0",
     "react": "^18.2.0",
     "react-diff-view": "3.3.2",
     "react-dom": "^18.2.0",
@@ -379,6 +395,8 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
     "turbo": "2.9.8"
   }
 }

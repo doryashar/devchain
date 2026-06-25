@@ -1,5 +1,5 @@
 import { TerminalFrameStream, type FrameEvent } from './terminal-frame-stream';
-import { normalizeLineEndings } from '../../utils/normalize-line-endings';
+import { normalizeLineEndings, stripFinalLineEnding } from '../../utils/normalize-line-endings';
 
 export interface AuthorityResult {
   readonly granted: boolean;
@@ -9,6 +9,7 @@ export interface AuthorityResult {
 export interface ResizeResult {
   readonly applied: boolean;
   readonly reason?: 'not_authority' | 'unchanged' | 'debounced';
+  readonly ptyDimensions?: Dimensions;
 }
 
 export interface Dimensions {
@@ -31,6 +32,7 @@ export interface TerminalIORef {
     lines?: number,
     includeEscapes?: boolean,
   ): Promise<{ ok: boolean; output: string }>;
+  getCursorPosition?(target: { name: string }): Promise<{ x: number; y: number } | null>;
 }
 
 export interface TerminalSessionOptions {
@@ -66,6 +68,13 @@ export class TerminalSession {
   private readonly idleAfterMs: number;
   private readonly normalizeCapturedLineEndings: boolean;
   private io?: TerminalIORef;
+  /**
+   * Whether this session's provider runs as a full-screen TUI on the alternate
+   * screen. Set by the gateway (which can resolve it) before each subscribe.
+   * Alt-screen seeds advertise NO history affordance — `capture-pane` only holds
+   * the single visible screen, so there is no primary-buffer scrollback to load.
+   */
+  private usesAlternateScreen = false;
 
   constructor(options: TerminalSessionOptions) {
     this.sessionId = options.sessionId;
@@ -108,10 +117,13 @@ export class TerminalSession {
     const sessionId = this.sessionId;
     const tmuxSessionName = this.tmuxSessionName;
 
-    io.captureHistory({ name: tmuxSessionName }).then((result) => {
+    io.captureHistory({ name: tmuxSessionName }).then(async (result) => {
       if (!result.ok || this.disposed) return;
 
       const ansi = this.normalizeCapturedOutput(result.output);
+      const cursorPos = await io.getCursorPosition?.({ name: tmuxSessionName }).catch(() => null);
+      if (this.disposed) return;
+
       const chunkSize = TerminalSession.SEED_CHUNK_SIZE;
       const chunks: string[] = [];
       for (let i = 0; i < ansi.length; i += chunkSize) {
@@ -128,7 +140,15 @@ export class TerminalSession {
             data: chunks[i],
             chunk: i,
             totalChunks,
-            ...(i === totalChunks - 1 ? { hasHistory: true } : {}),
+            ...(i === totalChunks - 1
+              ? {
+                  // Alt-screen TUIs have no loadable primary-buffer scrollback, so
+                  // advertise no-history; line-streaming providers keep the affordance.
+                  hasHistory: !this.usesAlternateScreen,
+                  cursorX: cursorPos?.x,
+                  cursorY: cursorPos?.y,
+                }
+              : {}),
           },
         });
       }
@@ -176,15 +196,16 @@ export class TerminalSession {
       return { applied: false, reason: 'not_authority' };
     }
 
+    if (this.resizeTimer) {
+      this.pendingResize = { clientId, dims };
+      return { applied: false, reason: 'debounced', ptyDimensions: dims };
+    }
+
     if (this.dimensions.cols === dims.cols && this.dimensions.rows === dims.rows) {
       return { applied: false, reason: 'unchanged' };
     }
 
     this.pendingResize = { clientId, dims };
-
-    if (this.resizeTimer) {
-      return { applied: false, reason: 'debounced' };
-    }
 
     this.resizeTimer = setTimeout(() => {
       this.resizeTimer = null;
@@ -195,11 +216,16 @@ export class TerminalSession {
       }
     }, RESIZE_DEBOUNCE_MS);
 
-    return { applied: true };
+    return { applied: true, ptyDimensions: dims };
   }
 
   bindIO(io: TerminalIORef): void {
     this.io = io;
+  }
+
+  /** Set whether this session's provider uses the alternate screen (drives seed hasHistory). */
+  setUsesAlternateScreen(value: boolean): void {
+    this.usesAlternateScreen = value;
   }
 
   async requestFullHistory(): Promise<void> {
@@ -216,7 +242,10 @@ export class TerminalSession {
   }
 
   private normalizeCapturedOutput(output: string): string {
-    return this.normalizeCapturedLineEndings ? normalizeLineEndings(output) : output;
+    const withoutTrailingLineEnding = stripFinalLineEnding(output);
+    return this.normalizeCapturedLineEndings
+      ? normalizeLineEndings(withoutTrailingLineEnding)
+      : withoutTrailingLineEnding;
   }
 
   deliverFullHistory(ansi: string): void {

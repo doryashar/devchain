@@ -118,6 +118,11 @@ export function useChatThreadUiState({
   const latestSelectedThreadRef = useRef<string | null>(null);
   const previousProjectIdRef = useRef<string | null>(null);
   const previousThreadIdRef = useRef<string | null>(null);
+  // Tracks the project for which we have already attempted to restore the
+  // remembered thread. Restore should run once per project (on mount/switch),
+  // not every time the thread is deliberately cleared (e.g. selecting a
+  // worktree agent), otherwise selection bounces back to the last thread.
+  const restoredProjectRef = useRef<string | null>(null);
   const normalizedProjectId = projectId ?? null;
   const projectChanged =
     previousProjectIdRef.current !== null && previousProjectIdRef.current !== normalizedProjectId;
@@ -172,6 +177,14 @@ export function useChatThreadUiState({
     if (!normalizedProjectId || selectedThreadId || allThreads.length === 0 || projectChanged) {
       return;
     }
+
+    // Only auto-restore the remembered thread once per project. After the user
+    // has been here, a cleared thread is an intentional deselection (e.g.
+    // choosing a worktree agent) and must not be overridden.
+    if (restoredProjectRef.current === normalizedProjectId) {
+      return;
+    }
+    restoredProjectRef.current = normalizedProjectId;
 
     const storedThreadId = readLastThreadId(normalizedProjectId);
     if (!storedThreadId) {

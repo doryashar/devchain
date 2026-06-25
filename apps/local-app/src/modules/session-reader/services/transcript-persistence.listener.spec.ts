@@ -321,6 +321,7 @@ describe('TranscriptPersistenceListener', () => {
         projectId: '11111111-1111-1111-1111-111111111111',
         transcriptPath: '/normalized/path/session.jsonl',
         providerName: 'claude',
+        providerSessionId: 'claude-sess-123',
       });
     });
 
@@ -437,6 +438,10 @@ describe('TranscriptPersistenceListener', () => {
         projectId: 'project-1',
         transcriptPath: '/normalized/path/session.jsonl',
         providerName: 'codex',
+        // Regression: the discovered event MUST carry providerSessionId on the
+        // persisted-both success path, or DB-backed watchers skip startup
+        // (transcript-watcher.service.ts: DB sources require providerSessionId).
+        providerSessionId: 'codex-session-1',
       });
     });
 

@@ -1,6 +1,10 @@
 import { broadcastRegistry } from '../../modules/events/catalog/broadcast-registry';
-import type { BroadcastTopicEntry } from '../../modules/events/catalog/broadcast-metadata';
-import { realtimeRegistryCatalog } from './realtime-registry-catalog';
+import {
+  nonRegistryBroadcastCatalog,
+  type RegistryCatalogEntry,
+} from './realtime-registry-catalog';
+
+const VALID_KINDS = ['invalidate', 'no-op', 'custom-handler'];
 
 function resolveTopicPattern(topic: string | ((p: Record<string, unknown>) => string)): string {
   if (typeof topic === 'string') return topic;
@@ -12,49 +16,71 @@ function resolveTopicPattern(topic: string | ((p: Record<string, unknown>) => st
     worktreeId: '{id}',
     agentId: '{id}',
   };
-  const resolved = topic(sample);
-  return resolved;
+  return topic(sample);
 }
 
-function resolveType(type: string | ((p: Record<string, unknown>) => string)): string {
-  if (typeof type === 'string') return type;
-  return '*';
-}
+describe('broadcastRegistry clientReaction contract ↔ non-registry catalog', () => {
+  // Derive expected registry coverage from broadcastRegistry itself via each entry's
+  // `clientReaction` — there is no hand-copied mirror to drift from anymore. Iterate EVERY
+  // item in each event's array so the review dual-topic fan-out (2 entries per review event,
+  // see broadcast-registry.ts review.* entries) is preserved.
+  const registryDerived: RegistryCatalogEntry[] = [];
+  const dynamicEntries: { eventName: string; kind: string }[] = [];
 
-describe('RealtimeRegistryCatalog ↔ broadcastRegistry alignment', () => {
-  const catalogKeys = new Set(realtimeRegistryCatalog.map((e) => `${e.topicPattern}::${e.type}`));
-
-  it('every broadcastRegistry entry has a matching catalog entry', () => {
-    const missing: string[] = [];
-
-    for (const [eventName, entries] of Object.entries(broadcastRegistry)) {
-      for (const entry of entries as BroadcastTopicEntry<Record<string, unknown>>[]) {
-        const topicPattern = resolveTopicPattern(entry.topic);
-        const type = resolveType(entry.type);
-
-        if (type === '*') continue;
-
-        const key = `${topicPattern}::${type}`;
-        if (!catalogKeys.has(key)) {
-          missing.push(`${eventName} → ${key}`);
-        }
+  for (const [eventName, entries] of Object.entries(broadcastRegistry)) {
+    for (const entry of entries) {
+      if (typeof entry.type === 'function') {
+        // Dynamic-type entry (e.g. `epic.broadcast`): the concrete `type` is only known at
+        // runtime from the payload, so there is no concrete topic/type to key-match here —
+        // this mirrors the original test's `*`-skip. We still enforce its clientReaction.kind
+        // below so a dynamic entry can never silently ship without a declared client reaction.
+        dynamicEntries.push({ eventName, kind: entry.clientReaction.kind });
+        continue;
       }
+      registryDerived.push({
+        topicPattern: resolveTopicPattern(entry.topic),
+        type: entry.type,
+        kind: entry.clientReaction.kind,
+        owner: entry.clientReaction.owner,
+      });
     }
+  }
 
-    expect(missing).toEqual([]);
+  // The full concrete catalog the web client reacts to: registry-derived (static-type) entries
+  // plus the direct/non-registry broadcasts. The valid-kind and no-duplicate guards below run
+  // over this COMBINED set — they previously guarded the hand mirror and must not be lost.
+  const combined: RegistryCatalogEntry[] = [...registryDerived, ...nonRegistryBroadcastCatalog];
+
+  it('coverage counts are stable (28 keys / 33 items / 32 static + 1 dynamic / 43 combined)', () => {
+    const keyCount = Object.keys(broadcastRegistry).length;
+    const itemCount = Object.values(broadcastRegistry).reduce((n, arr) => n + arr.length, 0);
+
+    expect(keyCount).toBe(28);
+    expect(itemCount).toBe(33);
+    expect(registryDerived.length).toBe(32);
+    expect(dynamicEntries.length).toBe(1);
+    expect(nonRegistryBroadcastCatalog.length).toBe(11);
+    expect(combined.length).toBe(43);
   });
 
-  it('every catalog entry has a valid kind', () => {
-    for (const entry of realtimeRegistryCatalog) {
-      expect(['invalidate', 'no-op', 'custom-handler']).toContain(entry.kind);
+  it('every dynamic-type registry entry declares a valid clientReaction kind', () => {
+    expect(dynamicEntries.length).toBeGreaterThan(0);
+    for (const entry of dynamicEntries) {
+      expect(VALID_KINDS).toContain(entry.kind);
     }
   });
 
-  it('no duplicate catalog entries', () => {
+  it('every combined catalog entry has a valid kind', () => {
+    for (const entry of combined) {
+      expect(VALID_KINDS).toContain(entry.kind);
+    }
+  });
+
+  it('no duplicate catalog entries across the combined set', () => {
     const seen = new Set<string>();
     const duplicates: string[] = [];
 
-    for (const entry of realtimeRegistryCatalog) {
+    for (const entry of combined) {
       const key = `${entry.topicPattern}::${entry.type}`;
       if (seen.has(key)) {
         duplicates.push(key);

@@ -670,6 +670,61 @@ describe('TerminalDock collapsed bar pills', () => {
     });
   });
 
+  describe('rightSlot prop', () => {
+    it('renders no right slot element when rightSlot prop is omitted', () => {
+      mockWindows = [];
+
+      renderWithQueryClient(<TerminalDock {...defaultProps} expanded={false} sessions={[]} />);
+
+      expect(screen.queryByTestId('right-slot-content')).not.toBeInTheDocument();
+    });
+
+    it('renders right slot content when rightSlot prop is provided', () => {
+      mockWindows = [];
+
+      renderWithQueryClient(
+        <TerminalDock
+          {...defaultProps}
+          expanded={false}
+          sessions={[]}
+          rightSlot={<span data-testid="right-slot-content">Status</span>}
+        />,
+      );
+
+      expect(screen.getByTestId('right-slot-content')).toBeInTheDocument();
+      expect(screen.getByText('Status')).toBeInTheDocument();
+    });
+
+    it('left group (toggle button + session pills) still renders correctly when rightSlot is provided', () => {
+      const session = createMockSession({ id: 'session-1' });
+
+      mockWindows = [
+        createMockWindow({
+          id: 'window-1',
+          sessionId: 'session-1',
+          minimized: false,
+          details: [{ label: 'Agent', value: 'Agent One' }],
+        }),
+      ];
+
+      renderWithQueryClient(
+        <TerminalDock
+          {...defaultProps}
+          expanded={false}
+          sessions={[session]}
+          rightSlot={<span data-testid="right-slot-content">Status</span>}
+        />,
+      );
+
+      // Toggle button still present
+      expect(screen.getByRole('button', { name: /expand terminal dock/i })).toBeInTheDocument();
+      // Session pill still present
+      expect(screen.getByRole('button', { name: /agent one/i })).toBeInTheDocument();
+      // Right slot also present
+      expect(screen.getByTestId('right-slot-content')).toBeInTheDocument();
+    });
+  });
+
   describe('Agent summary query optimization', () => {
     it('does NOT call fetchAgentSummary when dock is collapsed (expanded=false)', async () => {
       mockFetchAgentSummary.mockClear();

@@ -1203,11 +1203,11 @@ export function ChatSidebar({
                       {teamSections.noTeamAgents.length > 0 && (
                         <div className="pt-2">
                           {renderVisualSectionHeader(
-                            'INDEPENDENT',
+                            'STANDALONE',
                             formatSectionCount(teamSections.noTeamAgents.length, 'agent'),
                             <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
                           )}
-                          <div className="space-y-1" role="list" aria-label="Independent agents">
+                          <div className="space-y-1" role="list" aria-label="Standalone agents">
                             {teamSections.noTeamAgents.map((agent) =>
                               renderMainAgentRow(agent, { keyPrefix: 'no-team' }),
                             )}
@@ -1362,11 +1362,11 @@ export function ChatSidebar({
                       {teamSections.noTeamAgents.length > 0 && (
                         <div className="pt-2">
                           {renderVisualSectionHeader(
-                            'INDEPENDENT',
+                            'STANDALONE',
                             formatSectionCount(teamSections.noTeamAgents.length, 'agent'),
                             <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />,
                           )}
-                          <div className="space-y-1" role="list" aria-label="Independent agents">
+                          <div className="space-y-1" role="list" aria-label="Standalone agents">
                             {teamSections.noTeamAgents.map((agent) =>
                               renderMainAgentRow(agent, { keyPrefix: 'no-team' }),
                             )}

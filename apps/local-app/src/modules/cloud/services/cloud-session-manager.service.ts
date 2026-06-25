@@ -13,7 +13,7 @@ const logger = createLogger('CloudSessionManager');
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 const REFRESH_RETRY_DELAY_MS = 30_000;
-const IDENTITY_SERVICE_URL = process.env.IDENTITY_SERVICE_URL || 'http://localhost:3002';
+const IDENTITY_SERVICE_URL = process.env.IDENTITY_SERVICE_URL || 'https://auth.devchain.cc';
 
 @Injectable()
 export class CloudSessionManagerService implements OnModuleInit, OnModuleDestroy {
@@ -68,14 +68,25 @@ export class CloudSessionManagerService implements OnModuleInit, OnModuleDestroy
     this.currentTokens = tokens;
     this.scheduleRefresh();
 
-    await this.eventsService.publish('session.cloud_connected', {
-      userId: tokens.userId,
-    });
+    // Once tokens are persisted and the session is set, the connection is
+    // established. Notification + broadcast are best-effort: a failure in one
+    // must not skip the other, and neither must surface as an auth failure.
+    try {
+      await this.eventsService.publish('session.cloud_connected', {
+        userId: tokens.userId,
+      });
+    } catch (err) {
+      logger.warn({ err }, 'Failed to publish session.cloud_connected event');
+    }
 
-    this.broadcaster.broadcastEvent('cloud', 'connected', {
-      userId: tokens.userId,
-      email: tokens.email,
-    });
+    try {
+      this.broadcaster.broadcastEvent('cloud', 'connected', {
+        userId: tokens.userId,
+        email: tokens.email,
+      });
+    } catch (err) {
+      logger.warn({ err }, 'Failed to broadcast cloud connected event');
+    }
 
     logger.info({ userId: tokens.userId }, 'Cloud session established');
     return tokens;

@@ -1,3 +1,16 @@
+// Mock the logger BEFORE importing the service so logger.warn is inspectable
+// (the real createLogger returns a pino child that is silent under Jest).
+const mockLogger = {
+  error: jest.fn(),
+  warn: jest.fn(),
+  info: jest.fn(),
+  debug: jest.fn(),
+};
+
+jest.mock('../../../common/logging/logger', () => ({
+  createLogger: () => mockLogger,
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { CloudSessionManagerService } from './cloud-session-manager.service';
 import { EncryptedTokenStoreService } from './encrypted-token-store.service';
@@ -29,6 +42,11 @@ describe('CloudSessionManagerService', () => {
   });
 
   beforeEach(async () => {
+    mockLogger.error.mockClear();
+    mockLogger.warn.mockClear();
+    mockLogger.info.mockClear();
+    mockLogger.debug.mockClear();
+
     tokenStore = {
       store: jest.fn(),
       retrieve: jest.fn().mockReturnValue(null),
@@ -110,13 +128,60 @@ describe('CloudSessionManagerService', () => {
       await expect(service.storeTokens('invalid-token', 'refresh')).rejects.toThrow();
       expect(tokenStore.store).not.toHaveBeenCalled();
     });
+
+    it('still resolves success and warns when eventsService.publish throws', async () => {
+      const accessToken = await signTestJwt();
+      eventsService.publish.mockRejectedValueOnce(new Error('events bus down'));
+
+      const result = await service.storeTokens(accessToken, 'refresh');
+
+      expect(result.userId).toBe('user-123');
+      expect(tokenStore.store).toHaveBeenCalledTimes(1);
+      // Publish failure must not skip the broadcast attempt (independent wraps).
+      expect(broadcaster.broadcastEvent).toHaveBeenCalledWith(
+        'cloud',
+        'connected',
+        expect.objectContaining({ userId: 'user-123' }),
+      );
+      expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    it('still resolves success and warns when broadcaster.broadcastEvent throws', async () => {
+      const accessToken = await signTestJwt();
+      broadcaster.broadcastEvent.mockImplementationOnce(() => {
+        throw new Error('broadcast failed');
+      });
+
+      const result = await service.storeTokens(accessToken, 'refresh');
+
+      expect(result.userId).toBe('user-123');
+      expect(tokenStore.store).toHaveBeenCalledTimes(1);
+      expect(eventsService.publish).toHaveBeenCalledWith('session.cloud_connected', {
+        userId: 'user-123',
+      });
+      expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    it('propagates when tokenStore.store throws (controller maps it to 500)', async () => {
+      const accessToken = await signTestJwt();
+      tokenStore.store.mockImplementationOnce(() => {
+        throw new Error('encryption key unavailable');
+      });
+
+      await expect(service.storeTokens(accessToken, 'refresh')).rejects.toThrow(
+        'encryption key unavailable',
+      );
+      // Persistence failed → side effects must not run.
+      expect(eventsService.publish).not.toHaveBeenCalled();
+      expect(broadcaster.broadcastEvent).not.toHaveBeenCalled();
+    });
   });
 
   describe('getStatus', () => {
-    it('should expose configured identityServiceUrl or default to port 3002', () => {
+    it('should expose configured identityServiceUrl or default to auth.devchain.cc', () => {
       const status = service.getStatus();
       expect(status.identityServiceUrl).toBe(
-        process.env.IDENTITY_SERVICE_URL || 'http://localhost:3002',
+        process.env.IDENTITY_SERVICE_URL || 'https://auth.devchain.cc',
       );
     });
 

@@ -1,5 +1,6 @@
 import { Smartphone } from 'lucide-react';
 import { AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { useDevicesQuery } from '@/ui/hooks/useDevicesQuery';
@@ -88,7 +89,14 @@ export function DevicesPanel() {
       <div role="status" className="rounded-lg border border-dashed p-4 text-center">
         <Smartphone className="mx-auto h-6 w-6 text-muted-foreground mb-2" />
         <p className="text-sm text-muted-foreground">
-          No mobile devices yet. Install the DevChain mobile app to register one.
+          No mobile devices yet.{' '}
+          <Link
+            to="/cloud?section=account"
+            className="text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+          >
+            Get the DevChain mobile app
+          </Link>{' '}
+          to register one.
         </p>
       </div>
     );

@@ -18,6 +18,10 @@ import {
   type FamilyAlternativesResult,
   type ProjectSettingsTemplateInput,
 } from './profile-mapping.helpers';
+import {
+  ensureNoDuplicateAgentNames,
+  planAndApplySessionPreservation,
+} from './project-import-sessions';
 
 const logger = createLogger('ProjectImport');
 
@@ -166,9 +170,13 @@ export async function importProjectWithHelper(
   ensureFamilyCanImport(context.familyResult);
   ensureSelectedProvidersAvailable(context.selectedProfilesByFamily, context.available);
   ensureNoActiveSessions(input.projectId, deps);
+  ensureNoDuplicateAgentNames(context.payload.agents);
 
   try {
     const oldAgentIdToName = buildOldAgentIdToNameMap(context.existing.agents.items);
+
+    const oldAgentIds = context.existing.agents.items.map((a) => a.id);
+    const parkedByOldAgentId = await deps.storage.parkSessionsFromAgents(oldAgentIds);
 
     await clearExistingProjectData(input.projectId, context.existing, deps);
 
@@ -200,7 +208,7 @@ export async function importProjectWithHelper(
       deps.storage,
     );
 
-    const { agentIdMap } = await createImportedAgents(
+    const { agentIdMap, agentNameToId } = await createImportedAgents(
       input.projectId,
       context.payload.agents,
       context.selectedProfilesByFamily.agentProfileMap,
@@ -208,6 +216,14 @@ export async function importProjectWithHelper(
       configLookupMap,
       deps.storage,
     );
+
+    const sessionPreservation = await planAndApplySessionPreservation(
+      parkedByOldAgentId,
+      context.existing.agents.items,
+      agentNameToId,
+      deps.storage,
+    );
+    logger.info(sessionPreservation, 'Session preservation applied');
 
     const mappingResults = await importWatchersAndSubscribers(
       input.projectId,
@@ -292,6 +308,7 @@ export async function importProjectWithHelper(
       epicsCleared: epicResult.epicsCleared,
       teamsImported,
       scheduledEpicsImported,
+      sessionPreservation,
     });
   } catch (error) {
     logger.error({ error, projectId: input.projectId }, 'Import failed');
@@ -786,8 +803,9 @@ async function createImportedAgents(
   profileIdMap: Record<string, string>,
   configLookupMap: Map<string, string>,
   storage: StorageService,
-) {
+): Promise<{ agentIdMap: Record<string, string>; agentNameToId: Record<string, string> }> {
   const agentIdMap: Record<string, string> = {};
+  const agentNameToId: Record<string, string> = {};
 
   for (const agent of agents) {
     const remappedProfileId = agentProfileMap.get(agent.id ?? '');
@@ -839,9 +857,10 @@ async function createImportedAgents(
 
     const agentKey = agent.id || `name:${agent.name.trim().toLowerCase()}`;
     agentIdMap[agentKey] = created.id;
+    agentNameToId[agent.name.trim().toLowerCase()] = created.id;
   }
 
-  return { agentIdMap };
+  return { agentIdMap, agentNameToId };
 }
 
 async function importWatchersAndSubscribers(
@@ -1602,6 +1621,7 @@ function buildImportSuccessResponse(args: {
   epicsCleared: number;
   teamsImported?: number;
   scheduledEpicsImported?: number;
+  sessionPreservation: { preservedCount: number; removedCount: number };
 }) {
   return {
     success: true,
@@ -1643,6 +1663,7 @@ function buildImportSuccessResponse(args: {
       subscriberIdMap: args.subscriberIdMap,
     },
     initialPromptSet: args.initialPromptSet,
+    sessionPreservation: args.sessionPreservation,
     message: 'Project configuration replaced. Epics preserved.',
   };
 }

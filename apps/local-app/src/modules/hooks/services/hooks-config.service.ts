@@ -53,7 +53,11 @@ if [ -z "$TMUX_SESSION" ]; then
   exit 0
 fi
 
-# Build combined payload: Claude Code fields + DevChain env vars
+# Build combined payload: Claude Code fields + DevChain env vars.
+# Tool fields (PreToolUse/PostToolUse) are forwarded with --argjson so the
+# questions OBJECT is preserved (never stringified). tool_response is size-capped
+# (may be string OR object). source/tool fields are added conditionally so each
+# discriminated-union variant stays strict-clean.
 PAYLOAD="$(echo "$INPUT" | jq \\
   --arg hookEventName "$HOOK_EVENT_NAME" \\
   --arg claudeSessionId "$(echo "$INPUT" | jq -r '.session_id // empty')" \\
@@ -61,22 +65,34 @@ PAYLOAD="$(echo "$INPUT" | jq \\
   --arg model "$(echo "$INPUT" | jq -r '.model // empty')" \\
   --arg permissionMode "$(echo "$INPUT" | jq -r '.permission_mode // empty')" \\
   --arg transcriptPath "$(echo "$INPUT" | jq -r '.transcript_path // empty')" \\
+  --arg toolName "$(echo "$INPUT" | jq -r '.tool_name // empty')" \\
+  --arg toolUseId "$(echo "$INPUT" | jq -r '.tool_use_id // empty')" \\
+  --argjson toolInput "$(echo "$INPUT" | jq -c '.tool_input // null')" \\
+  --argjson toolResponse "$(echo "$INPUT" | jq -c '
+    (.tool_response // null) as \$r
+    | if \$r == null then null
+      elif ((\$r | tostring | length) > 10000) then {truncated: true, length: (\$r | tostring | length)}
+      else \$r end')" \\
   --arg tmuxSessionName "$TMUX_SESSION" \\
   --arg projectId "\${DEVCHAIN_PROJECT_ID:-}" \\
   --arg agentId "\${DEVCHAIN_AGENT_ID:-}" \\
   --arg sessionId "\${DEVCHAIN_SESSION_ID:-}" \\
   '{
-    hookEventName: $hookEventName,
-    claudeSessionId: $claudeSessionId,
-    source: $source,
-    tmuxSessionName: $tmuxSessionName,
-    projectId: $projectId,
-    agentId: (if $agentId == "" then null else $agentId end),
-    sessionId: (if $sessionId == "" then null else $sessionId end)
+    hookEventName: \$hookEventName,
+    claudeSessionId: \$claudeSessionId,
+    tmuxSessionName: \$tmuxSessionName,
+    projectId: \$projectId,
+    agentId: (if \$agentId == "" then null else \$agentId end),
+    sessionId: (if \$sessionId == "" then null else \$sessionId end)
   }
-  + (if $model != "" then {model: $model} else {} end)
-  + (if $permissionMode != "" then {permissionMode: $permissionMode} else {} end)
-  + (if $transcriptPath != "" then {transcriptPath: $transcriptPath} else {} end)
+  + (if \$source != "" then {source: \$source} else {} end)
+  + (if \$model != "" then {model: \$model} else {} end)
+  + (if \$permissionMode != "" then {permissionMode: \$permissionMode} else {} end)
+  + (if \$transcriptPath != "" then {transcriptPath: \$transcriptPath} else {} end)
+  + (if \$toolName != "" then {toolName: \$toolName} else {} end)
+  + (if \$toolInput != null then {toolInput: \$toolInput} else {} end)
+  + (if \$toolUseId != "" then {toolUseId: \$toolUseId} else {} end)
+  + (if \$toolResponse != null then {toolResponse: \$toolResponse} else {} end)
   ')" || exit 0
 
 # POST to DevChain API, capture response
@@ -214,37 +230,13 @@ export class HooksConfigService {
       settings.hooks = {};
     }
 
-    // Merge SessionStart hooks — preserve user hooks, add/update DevChain entry
+    // Merge each DevChain hook group — preserve user hooks, add/update our entry.
+    // SessionStart has no matcher; the AskUserQuestion groups are matcher-scoped
+    // so the picker is captured BEFORE it blocks (Pre) and reconciled after (Post).
     const hooks = settings.hooks as Record<string, unknown>;
-    const sessionStartEntries = Array.isArray(hooks.SessionStart) ? hooks.SessionStart : [];
-
-    // Find existing DevChain matcher group or create one
-    const devchainMarker = 'devchain-relay.sh';
-    let devchainGroupFound = false;
-
-    const updatedEntries = sessionStartEntries.map((entry: unknown) => {
-      if (!isMatcherGroup(entry)) return entry;
-      const hasDevchain = entry.hooks?.some(
-        (h: unknown) =>
-          isHookEntry(h) && typeof h.command === 'string' && h.command.includes(devchainMarker),
-      );
-      if (hasDevchain) {
-        devchainGroupFound = true;
-        return {
-          ...entry,
-          hooks: [devchainHook],
-        };
-      }
-      return entry;
-    });
-
-    if (!devchainGroupFound) {
-      updatedEntries.push({
-        hooks: [devchainHook],
-      });
-    }
-
-    hooks.SessionStart = updatedEntries;
+    this.mergeHookGroup(hooks, 'SessionStart', undefined, devchainHook);
+    this.mergeHookGroup(hooks, 'PreToolUse', 'AskUserQuestion', devchainHook);
+    this.mergeHookGroup(hooks, 'PostToolUse', 'AskUserQuestion', devchainHook);
 
     // Atomic write
     const output = JSON.stringify(settings, null, 2) + '\n';
@@ -260,6 +252,49 @@ export class HooksConfigService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Idempotently merge the DevChain relay hook into one event group, preserving
+   * any user-authored matcher groups for the same event.
+   *
+   * A group is "ours" when it contains the relay marker AND its matcher matches
+   * `matcher` (so PreToolUse/PostToolUse — same script, different matcher — are
+   * kept as distinct groups, and re-running never duplicates an entry).
+   */
+  private mergeHookGroup(
+    hooks: Record<string, unknown>,
+    eventName: string,
+    matcher: string | undefined,
+    devchainHook: { type: 'command'; command: string; timeout: number },
+  ): void {
+    const existing = Array.isArray(hooks[eventName]) ? (hooks[eventName] as unknown[]) : [];
+    const devchainMarker = 'devchain-relay.sh';
+    let devchainGroupFound = false;
+
+    const updated = existing.map((entry: unknown) => {
+      if (!isMatcherGroup(entry)) return entry;
+      const hasDevchain = entry.hooks?.some(
+        (h: unknown) =>
+          isHookEntry(h) && typeof h.command === 'string' && h.command.includes(devchainMarker),
+      );
+      if (hasDevchain && entry.matcher === matcher) {
+        devchainGroupFound = true;
+        return {
+          ...(matcher !== undefined ? { matcher } : {}),
+          hooks: [devchainHook],
+        };
+      }
+      return entry;
+    });
+
+    if (!devchainGroupFound) {
+      updated.push(
+        matcher !== undefined ? { matcher, hooks: [devchainHook] } : { hooks: [devchainHook] },
+      );
+    }
+
+    hooks[eventName] = updated;
   }
 }
 

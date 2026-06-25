@@ -16,6 +16,7 @@ import { STORAGE_SERVICE } from '../modules/storage/interfaces/storage.interface
 import { REALTIME_BROADCASTER } from '../modules/realtime/ports/realtime-broadcaster.port';
 import { TerminalIOService } from '../modules/terminal/services/terminal-io/terminal-io.service';
 import { OrchestratorProxyService } from '../modules/orchestrator/proxy/services/orchestrator-proxy.service';
+import { MobileChatRpcService } from '../modules/cloud-tunnel/services/mobile-chat-rpc.service';
 import { AppBootstrapFixture, compileAppBootstrapFixture } from './test/app-bootstrap.helper';
 
 jest.setTimeout(60_000);
@@ -41,6 +42,8 @@ describe('app root bootstrap fixtures', () => {
     expect(moduleRef.get(SessionsService)).toBeInstanceOf(SessionsService);
     expect(moduleRef.get(McpService)).toBeInstanceOf(McpService);
     expect(moduleRef.get(AgentMessageDeliveryService)).toBeInstanceOf(AgentMessageDeliveryService);
+    // Mobile chat seam composes narrow facades; prove it resolves at bootstrap.
+    expect(moduleRef.get(MobileChatRpcService)).toBeInstanceOf(MobileChatRpcService);
   });
 
   it('compiles MainAppModule and exposes representative providers', async () => {
@@ -55,5 +58,6 @@ describe('app root bootstrap fixtures', () => {
     expect(moduleRef.get(SessionsService)).toBeInstanceOf(SessionsService);
     expect(moduleRef.get(McpService)).toBeInstanceOf(McpService);
     expect(moduleRef.get(OrchestratorProxyService)).toBeInstanceOf(OrchestratorProxyService);
+    expect(moduleRef.get(MobileChatRpcService)).toBeInstanceOf(MobileChatRpcService);
   });
 });

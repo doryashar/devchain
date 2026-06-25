@@ -96,7 +96,7 @@ export class PreferencesProxyController {
     token: string | null,
   ): Promise<unknown> {
     if (!token) throw new UnauthorizedException('No access token');
-    const baseUrl = process.env.NOTIFICATIONS_SERVICE_URL ?? 'http://localhost:3003';
+    const baseUrl = process.env.NOTIFICATIONS_SERVICE_URL ?? 'https://notify.devchain.cc';
     const hasBody = body !== undefined;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,

@@ -114,6 +114,7 @@ const createGateway = (options?: {
   const sessionsService: Partial<SessionsService> = {
     markSessionFailed: jest.fn(),
     shouldNormalizeLfFor: jest.fn().mockReturnValue(true),
+    usesAlternateScreenFor: jest.fn().mockReturnValue(false),
   };
 
   const registry = new TerminalSessionRegistry();
@@ -410,6 +411,37 @@ describe('TerminalGateway.handleRequestFullHistory', () => {
     expect(historyCall).toBeTruthy();
   });
 
+  it('preserves real trailing blank rows in full history', async () => {
+    const { gateway, terminalIO } = createGateway();
+    const client = createMockSocket('client-history-blank-row');
+
+    (terminalIO.captureHistory as jest.Mock).mockResolvedValue({
+      ok: true,
+      output: 'line 1\r\nline 2\r\n\r\n',
+    });
+
+    gateway.handleConnection(client as unknown as Socket);
+
+    await gateway.handleSubscribe(client as unknown as Socket, {
+      sessionId: 'session-history-blank-row',
+      rows: 24,
+      cols: 80,
+    });
+
+    await gateway.handleRequestFullHistory(client as unknown as Socket, {
+      sessionId: 'session-history-blank-row',
+      maxLines: 100,
+    });
+
+    const historyCall = (client.emit as jest.Mock).mock.calls.find(
+      ([event, envelope]) =>
+        event === 'message' && (envelope as { type?: string }).type === 'full_history',
+    );
+    expect((historyCall![1] as { payload: { history: string } }).payload.history).toBe(
+      'line 1\r\nline 2\r\n',
+    );
+  });
+
   it('coerces numeric string maxLines to integer', async () => {
     const { gateway, settingsService } = createGateway();
     const client = createMockSocket('client-string-num');
@@ -569,6 +601,41 @@ describe('TerminalGateway.handleSubscribe', () => {
     expect(session.hasSubscriber('client-1')).toBe(true);
   });
 
+  it('applies latest debounced resize to the PTY during seed jiggle', async () => {
+    const { gateway, ptyService } = createGateway();
+    const client = createMockSocket('client-jiggle-resize');
+
+    gateway.handleConnection(client as unknown as Socket);
+
+    await gateway.handleSubscribe(client as unknown as Socket, {
+      sessionId: 'session-jiggle-resize',
+      rows: 24,
+      cols: 80,
+    });
+
+    (ptyService.resize as jest.Mock).mockClear();
+    jest.useFakeTimers();
+    try {
+      await gateway.handleResize(client as unknown as Socket, {
+        sessionId: 'session-jiggle-resize',
+        rows: 23,
+        cols: 80,
+      });
+      await gateway.handleResize(client as unknown as Socket, {
+        sessionId: 'session-jiggle-resize',
+        rows: 24,
+        cols: 80,
+      });
+
+      expect(ptyService.resize).toHaveBeenNthCalledWith(1, 'session-jiggle-resize', 80, 23);
+      expect(ptyService.resize).toHaveBeenNthCalledWith(2, 'session-jiggle-resize', 80, 24);
+
+      jest.runAllTimers();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('forwards seed_ansi from TerminalSession frame stream to socket room (integration)', async () => {
     const { gateway, registry, roomEmit } = createGateway();
     const client = createMockSocket('client-seed');
@@ -717,7 +784,7 @@ describe('TerminalGateway.handleSubscribe', () => {
     session.stream.emit('frame', {
       type: 'resize_jiggle',
       sessionId: 'session-jiggle',
-      payload: { reason: 'option_a_seed' },
+      payload: { reason: 'manual_redraw' },
     });
 
     expect(roomEmit).toHaveBeenCalledWith(
@@ -1501,6 +1568,112 @@ describe('TerminalGateway.handleTheme', () => {
     await gateway.handleTheme(client as unknown as Socket, {
       foregroundHex: fg,
       backgroundHex: bg,
+    });
+
+    expect(ptyService.triggerRedraw).not.toHaveBeenCalled();
+  });
+});
+
+describe('TerminalGateway viewport-mode restore (Task 2)', () => {
+  it('triggers a redraw for an alt-screen session on terminal:restore_viewport_modes', async () => {
+    const { gateway, ptyService, sessionsService, registry } = createGateway({
+      autoCreateRegistrySessions: false,
+    });
+    registry.create('alt-sess', 'tmux_alt-sess');
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(true);
+    const client = createMockSocket('client-alt');
+
+    gateway.handleConnection(client as unknown as Socket);
+    await gateway.handleSubscribe(client as unknown as Socket, { sessionId: 'alt-sess' });
+    (ptyService.triggerRedraw as jest.Mock).mockClear();
+
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'alt-sess' });
+
+    expect(ptyService.triggerRedraw).toHaveBeenCalledWith('alt-sess');
+  });
+
+  it('no-ops the redraw for a non-alt-screen provider (gated on usesAlternateScreenFor)', async () => {
+    const { gateway, ptyService, sessionsService, registry } = createGateway({
+      autoCreateRegistrySessions: false,
+    });
+    registry.create('cli-sess', 'tmux_cli-sess');
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(false);
+    const client = createMockSocket('client-cli');
+
+    gateway.handleConnection(client as unknown as Socket);
+    await gateway.handleSubscribe(client as unknown as Socket, { sessionId: 'cli-sess' });
+    (ptyService.triggerRedraw as jest.Mock).mockClear();
+
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'cli-sess' });
+
+    expect(ptyService.triggerRedraw).not.toHaveBeenCalled();
+  });
+
+  it('ignores a restore request from a client not subscribed to that session', async () => {
+    const { gateway, ptyService, sessionsService } = createGateway();
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(true);
+    const client = createMockSocket('client-unsub');
+
+    gateway.handleConnection(client as unknown as Socket);
+    // No subscribe → not a subscriber of terminal/ghost-sess.
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'ghost-sess' });
+
+    expect(ptyService.triggerRedraw).not.toHaveBeenCalled();
+  });
+
+  it('coalesces simultaneous restore requests into a single redraw', async () => {
+    const { gateway, ptyService, sessionsService, registry } = createGateway({
+      autoCreateRegistrySessions: false,
+    });
+    registry.create('coalesce-sess', 'tmux_coalesce-sess');
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(true);
+    const client = createMockSocket('client-coalesce');
+
+    gateway.handleConnection(client as unknown as Socket);
+    await gateway.handleSubscribe(client as unknown as Socket, { sessionId: 'coalesce-sess' });
+    (ptyService.triggerRedraw as jest.Mock).mockClear();
+
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'coalesce-sess' });
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'coalesce-sess' });
+    gateway.handleRestoreViewportModes(client as unknown as Socket, { sessionId: 'coalesce-sess' });
+
+    expect(ptyService.triggerRedraw).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores viewport modes server-side on a no-seed (reconnect) attach to an alt-screen session', async () => {
+    const { gateway, ptyService, sessionsService, registry } = createGateway({
+      autoCreateRegistrySessions: false,
+    });
+    registry.create('reconnect-sess', 'tmux_reconnect-sess');
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(true);
+    const client = createMockSocket('client-reconnect');
+
+    gateway.handleConnection(client as unknown as Socket);
+    // lastSequence is a number → not a first attach → no client seed window.
+    await gateway.handleSubscribe(client as unknown as Socket, {
+      sessionId: 'reconnect-sess',
+      lastSequence: 5,
+      rows: 24,
+      cols: 80,
+    });
+
+    expect(ptyService.triggerRedraw).toHaveBeenCalledWith('reconnect-sess');
+  });
+
+  it('does NOT server-side redraw on a first (seeded) attach — the client requests it post-seed', async () => {
+    const { gateway, ptyService, sessionsService, registry } = createGateway({
+      autoCreateRegistrySessions: false,
+    });
+    registry.create('firstattach-sess', 'tmux_firstattach-sess');
+    (sessionsService.usesAlternateScreenFor as jest.Mock).mockReturnValue(true);
+    const client = createMockSocket('client-firstattach');
+
+    gateway.handleConnection(client as unknown as Socket);
+    // No lastSequence → first attach → seeded path; a redraw now would be discarded mid-seed.
+    await gateway.handleSubscribe(client as unknown as Socket, {
+      sessionId: 'firstattach-sess',
+      rows: 24,
+      cols: 80,
     });
 
     expect(ptyService.triggerRedraw).not.toHaveBeenCalled();

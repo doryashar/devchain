@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import Database from 'better-sqlite3';
 import { SessionReaderService } from './session-reader.service';
 import { SessionReaderAdapterFactory } from '../adapters/session-reader-adapter.factory';
 import { TranscriptPathValidator } from './transcript-path-validator.service';
@@ -10,6 +11,8 @@ import type { SessionsService } from '../../sessions/services/sessions.service';
 import type { StorageService } from '../../storage/interfaces/storage.interface';
 import { SessionCacheService } from './session-cache.service';
 import { ClaudeSessionReaderAdapter } from '../adapters/claude-session-reader.adapter';
+import { OpenCodeSessionReaderAdapter } from '../adapters/opencode-session-reader.adapter';
+import type { SessionSourceRef } from '../adapters/session-reader-adapter.interface';
 import type { PricingServiceInterface } from './pricing.interface';
 
 // ---------------------------------------------------------------------------
@@ -143,9 +146,10 @@ function setupResolveChain() {
   mockSessionCacheService.getOrParseWithMeta.mockImplementation(
     async (
       _id: string,
-      filePath: string,
+      source: string | { filePath: string },
       adapter: { parseFullSession: (p: string) => Promise<UnifiedSession> },
     ) => {
+      const filePath = typeof source === 'string' ? source : source.filePath;
       const session = await adapter.parseFullSession(filePath);
       return {
         session,
@@ -153,6 +157,7 @@ function setupResolveChain() {
         lastOffset: 1024,
         lastSize: 1024,
         lastMtime: Date.now(),
+        sourceVersion: 1024,
       };
     },
   );
@@ -207,6 +212,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -328,6 +334,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -412,6 +419,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -488,6 +496,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -550,6 +559,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -607,6 +617,7 @@ describe('SessionReaderService', () => {
         },
         {
           ...makeMessage('u2', 'user', '2026-01-01T10:00:06.000Z'),
+          isMeta: true, // real Claude tool_result entries are meta → classified 'ai' via the default branch
           content: [
             {
               type: 'tool_result',
@@ -636,6 +647,138 @@ describe('SessionReaderService', () => {
       const result = await service.getTranscript('sess-1', { maxToolResultLength: 2000 });
 
       expect(result).toBe(session);
+    });
+  });
+
+  describe('getTranscriptSummaryWithCursor', () => {
+    it('mints an opaque cursor from a single parse and the cursor round-trips into getTranscriptTail', async () => {
+      setupResolveChain();
+      const session = makeSession(); // 3 messages
+      mockAdapter.parseFullSession.mockResolvedValue(session);
+
+      const summary = await service.getTranscriptSummaryWithCursor('sess-1');
+
+      expect(summary.sessionId).toBe('sess-1');
+      expect(summary.messageCount).toBe(3);
+      expect(summary.metrics).toBeDefined();
+      expect(typeof summary.cursor).toBe('string');
+      expect(summary.cursor.length).toBeGreaterThan(0);
+      // bootstrap mints the cursor from one parse — no extra full-transcript read
+      expect(mockAdapter.parseFullSession).toHaveBeenCalledTimes(1);
+
+      // Feed the bootstrap cursor straight into the tail path: with no new
+      // messages it must be accepted (not expired) and report a TRUE-empty delta.
+      const tail = await service.getTranscriptTail('sess-1', summary.cursor);
+      expect(tail).not.toBeNull();
+      expect(tail?.totalMessageCount).toBe(3);
+      expect(tail?.deltaMessages).toEqual([]);
+      expect(tail?.deltaChunks).toEqual([]);
+      expect(tail?.replaceFromChunkId).toBeNull();
+    });
+  });
+
+  describe('getTranscriptTail — window-safe merge contract', () => {
+    it('no-op poll (no new messages) returns true-empty delta and the unchanged cursor', async () => {
+      setupResolveChain();
+      const session = makeSession(); // 3 messages
+      mockAdapter.parseFullSession.mockResolvedValue(session);
+
+      const summary = await service.getTranscriptSummaryWithCursor('sess-1');
+      const tail = await service.getTranscriptTail('sess-1', summary.cursor);
+
+      expect(tail).not.toBeNull();
+      expect(tail?.deltaChunks).toEqual([]);
+      expect(tail?.deltaMessages).toEqual([]);
+      expect(tail?.replaceFromChunkId).toBeNull();
+      // Cursor unchanged → genuine no-op (preserves client adaptive backoff).
+      expect(tail?.cursor).toBe(summary.cursor);
+    });
+
+    it('returns the window-stable anchor id of the first delta chunk when the tail grows', async () => {
+      setupResolveChain();
+      const twoMessages = [
+        makeMessage('m1', 'user', '2026-01-01T10:00:00.000Z'),
+        makeMessage('m2', 'assistant', '2026-01-01T10:00:05.000Z'),
+      ];
+      // Mint a cursor at the 2-message state.
+      mockAdapter.parseFullSession.mockResolvedValue(makeSession(twoMessages));
+      const summary = await service.getTranscriptSummaryWithCursor('sess-1');
+
+      // A new message arrives (transcript grew).
+      const threeMessages = [...twoMessages, makeMessage('m3', 'user', '2026-01-01T10:00:10.000Z')];
+      mockAdapter.parseFullSession.mockResolvedValue(makeSession(threeMessages));
+
+      const tail = await service.getTranscriptTail('sess-1', summary.cursor);
+
+      expect(tail).not.toBeNull();
+      expect(tail?.deltaChunks.length).toBeGreaterThan(0);
+      expect(tail?.deltaMessages.length).toBeGreaterThan(0);
+      // Anchor is authoritative and equals the first delta chunk's stable id.
+      expect(tail?.replaceFromChunkId).not.toBeNull();
+      expect(tail?.replaceFromChunkId).toBe(tail?.deltaChunks[0].id);
+      expect(tail?.totalMessageCount).toBe(3);
+    });
+
+    it('returns an in-place delta on source-revision change even when message count is unchanged', async () => {
+      setupResolveChain();
+      const messages = [
+        makeMessage('m1', 'user', '2026-01-01T10:00:00.000Z'),
+        makeMessage('m2', 'assistant', '2026-01-01T10:00:05.000Z'),
+        makeMessage('m3', 'user', '2026-01-01T10:00:10.000Z'),
+      ];
+      const session = makeSession(messages);
+      mockAdapter.parseFullSession.mockResolvedValue(session);
+
+      // Mint at sourceVersion 1024; the tail then sees a bumped revision (2048)
+      // with the SAME messages (DB in-place part update — no new messages).
+      mockSessionCacheService.getOrParseWithMeta
+        .mockResolvedValueOnce({
+          session,
+          cacheHit: false,
+          lastOffset: 1024,
+          lastSize: 1024,
+          lastMtime: Date.now(),
+          sourceVersion: 1024,
+        })
+        .mockResolvedValueOnce({
+          session,
+          cacheHit: false,
+          lastOffset: 2048,
+          lastSize: 2048,
+          lastMtime: Date.now(),
+          sourceVersion: 2048,
+        });
+
+      const summary = await service.getTranscriptSummaryWithCursor('sess-1');
+      const tail = await service.getTranscriptTail('sess-1', summary.cursor);
+
+      expect(tail).not.toBeNull();
+      expect(tail?.totalMessageCount).toBe(3);
+      // In-place last-chunk replacement: delta chunks present, but no NEW messages.
+      expect(tail?.deltaChunks.length).toBeGreaterThan(0);
+      expect(tail?.deltaMessages).toEqual([]);
+      expect(tail?.replaceFromChunkId).not.toBeNull();
+      // Cursor advanced to the new revision (NOT a no-op).
+      expect(tail?.cursor).not.toBe(summary.cursor);
+    });
+
+    it('returns null on an expired cursor (message count exceeds the current total)', async () => {
+      setupResolveChain();
+      const threeMessages = [
+        makeMessage('m1', 'user', '2026-01-01T10:00:00.000Z'),
+        makeMessage('m2', 'assistant', '2026-01-01T10:00:05.000Z'),
+        makeMessage('m3', 'user', '2026-01-01T10:00:10.000Z'),
+      ];
+      mockAdapter.parseFullSession.mockResolvedValue(makeSession(threeMessages));
+      const summary = await service.getTranscriptSummaryWithCursor('sess-1');
+
+      // Session shrank (e.g. rotated) below the cursor's message count.
+      mockAdapter.parseFullSession.mockResolvedValue(
+        makeSession([makeMessage('m1', 'user', '2026-01-01T10:00:00.000Z')]),
+      );
+
+      const tail = await service.getTranscriptTail('sess-1', summary.cursor);
+      expect(tail).toBeNull();
     });
   });
 
@@ -1194,10 +1337,14 @@ describe('SessionReaderService', () => {
       // getOrParseWithMeta is called on every getParsedSession invocation;
       // whether it re-parses or returns cached data is SessionCacheService's job.
       expect(mockSessionCacheService.getOrParseWithMeta).toHaveBeenCalledTimes(3);
-      // The adapter object is passed through to SessionCacheService
+      // The resolved source-ref + adapter are passed through to SessionCacheService
       expect(mockSessionCacheService.getOrParseWithMeta).toHaveBeenCalledWith(
         'sess-1',
-        '/home/user/.claude/projects/-test/session.jsonl',
+        {
+          filePath: '/home/user/.claude/projects/-test/session.jsonl',
+          providerName: 'claude',
+          kind: 'file',
+        },
         mockAdapter,
       );
     });
@@ -1230,6 +1377,7 @@ describe('SessionReaderService', () => {
           lastOffset: 1000,
           lastSize: 1000,
           lastMtime: Date.now(),
+          sourceVersion: 1000,
         })
         .mockResolvedValueOnce({
           session,
@@ -1237,6 +1385,7 @@ describe('SessionReaderService', () => {
           lastOffset: 1000,
           lastSize: 1000,
           lastMtime: Date.now(),
+          sourceVersion: 1000,
         });
 
       const result1 = await service.getTranscript('sess-1');
@@ -1266,6 +1415,7 @@ describe('SessionReaderService', () => {
           lastOffset: 1000,
           lastSize: 1000,
           lastMtime: Date.now(),
+          sourceVersion: 1000,
         })
         .mockResolvedValueOnce({
           session: session2,
@@ -1273,6 +1423,7 @@ describe('SessionReaderService', () => {
           lastOffset: 2000,
           lastSize: 2000,
           lastMtime: Date.now(),
+          sourceVersion: 2000,
         });
 
       const result1 = await service.getTranscript('sess-1');
@@ -1382,6 +1533,335 @@ describe('SessionReaderService', () => {
       });
       const result2 = await service.getTranscript('sess-1');
       expect(result2.metrics.contextWindowTokens).toBe(1_000_000);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // DB-backed in-place revision — REAL cache + REAL OpenCode adapter
+  //
+  // The mocked-cache tests above prove the tail BRANCHING; this block proves the
+  // integrated cache→adapter→tail path actually surfaces an in-place part edit.
+  // It exercises the real SessionCacheService and the real
+  // OpenCodeSessionReaderAdapter (real OpencodeSqliteReader) over a fixture
+  // `opencode.db`. The `resolveAdapter` seam is stubbed only to supply a
+  // SessionSourceRef carrying `providerSessionId` (read-path providerSessionId
+  // threading is the adapter-wiring task's concern, not tail semantics).
+  // ---------------------------------------------------------------------------
+  describe('DB-backed in-place revision (real cache + real OpenCode adapter)', () => {
+    const SCHEMA_SQL = `
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY, title TEXT, model TEXT, agent TEXT, parent_id TEXT,
+        directory TEXT, project_id TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL
+      );
+      CREATE INDEX part_session_idx ON part (session_id);
+    `;
+    const SES = 'ses_inplace';
+
+    let tmpDir: string;
+    let dbPath: string;
+    let realCache: SessionCacheService;
+    let dbService: SessionReaderService;
+    let resolveSpy: jest.SpyInstance;
+
+    function makePricing(): jest.Mocked<PricingServiceInterface> {
+      return {
+        calculateMessageCost: jest.fn().mockReturnValue(0),
+        getContextWindowSize: jest.fn().mockReturnValue(200_000),
+      } as unknown as jest.Mocked<PricingServiceInterface>;
+    }
+
+    function seedDb(): void {
+      const db = new Database(dbPath);
+      try {
+        db.pragma('journal_mode = WAL'); // mirror OpenCode (WAL); reader must read it
+        db.exec(SCHEMA_SQL);
+        db.prepare(
+          `INSERT INTO session (id, title, model, agent, parent_id, time_created, time_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(SES, 'In-place test', 'glm-5.1', 'build', null, 1_000, 9_999);
+        const insMsg = db.prepare(
+          `INSERT INTO message (id, session_id, time_created, time_updated, data)
+           VALUES (?, ?, ?, ?, ?)`,
+        );
+        const insPart = db.prepare(
+          `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        );
+        insMsg.run('msg_user', SES, 1_000, 1_000, JSON.stringify({ role: 'user' }));
+        insPart.run(
+          'prt_user',
+          'msg_user',
+          SES,
+          1_000,
+          1_000,
+          JSON.stringify({ type: 'text', text: 'run the tool' }),
+        );
+        insMsg.run('msg_asst', SES, 2_000, 2_000, JSON.stringify({ role: 'assistant' }));
+        insPart.run(
+          'prt_asst',
+          'msg_asst',
+          SES,
+          2_000,
+          2_000,
+          JSON.stringify({ type: 'text', text: 'working…' }),
+        );
+      } finally {
+        db.close();
+      }
+    }
+
+    /** Simulate an in-place part edit (no new message): mutate the part + bump its time_updated. */
+    function bumpPartInPlace(newTimeUpdated: number): void {
+      const db = new Database(dbPath);
+      try {
+        db.pragma('journal_mode = WAL');
+        db.prepare(`UPDATE part SET data = ?, time_updated = ? WHERE id = ?`).run(
+          JSON.stringify({ type: 'text', text: 'done — tool output here' }),
+          newTimeUpdated,
+          'prt_asst',
+        );
+      } finally {
+        db.close();
+      }
+    }
+
+    beforeEach(async () => {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-tail-'));
+      dbPath = path.join(tmpDir, 'opencode.db');
+      seedDb();
+
+      realCache = new SessionCacheService();
+      const adapter = new OpenCodeSessionReaderAdapter(makePricing());
+
+      dbService = new SessionReaderService(
+        mockAdapterFactory as unknown as SessionReaderAdapterFactory,
+        mockPathValidator as unknown as TranscriptPathValidator,
+        realCache,
+        mockSessionsService as unknown as SessionsService,
+        mockStorage as unknown as StorageService,
+        mockProviderAdapterFactory as unknown as never,
+      );
+
+      const sourceRef: SessionSourceRef = {
+        filePath: dbPath,
+        providerName: 'opencode',
+        providerSessionId: SES,
+        kind: 'db',
+      };
+      // Stub only the resolution seam; cache + adapter + reader are all real.
+      resolveSpy = jest
+        .spyOn(dbService as unknown as { resolveAdapter: () => unknown }, 'resolveAdapter')
+        .mockResolvedValue({
+          adapter,
+          transcriptPath: dbPath,
+          sourceRef,
+          providerName: 'opencode',
+          oneMillionContextEnabled: false,
+        });
+    });
+
+    afterEach(async () => {
+      resolveSpy?.mockRestore();
+      realCache?.onModuleDestroy();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('moves sourceVersion off the token (maxUpdated), not the container file size, on an in-place edit', async () => {
+      // Mint a cursor at the initial revision (session.time_updated = 9_999 dominates).
+      await dbService.getTranscriptSummaryWithCursor(SES);
+      expect(realCache.getEntry(SES)?.sourceVersion).toBe(9_999);
+
+      // In-place part edit (same message count) bumps maxUpdated to a sentinel that
+      // is unmistakably NOT a byte size of the tiny fixture DB.
+      const SENTINEL = 7_000_000;
+      bumpPartInPlace(SENTINEL);
+
+      // No manual invalidation: the cache must detect the change purely from the
+      // freshness token (maxUpdated moved), even though the part COUNT is unchanged.
+      await dbService.getTranscript(SES); // re-parse through the real cache
+      const after = realCache.getEntry(SES)?.sourceVersion;
+      expect(after).toBe(SENTINEL);
+
+      // Decouple proof: sourceVersion is the token's maxUpdated, not the file size.
+      const dbSize = (await fs.stat(dbPath)).size;
+      expect(after).not.toBe(dbSize);
+    });
+
+    it('returns an in-place delta from getTranscriptTail when only a part changed (no new message)', async () => {
+      const summary = await dbService.getTranscriptSummaryWithCursor(SES);
+
+      const SENTINEL = 7_000_000;
+      bumpPartInPlace(SENTINEL);
+
+      const tail = await dbService.getTranscriptTail(SES, summary.cursor);
+
+      expect(tail).not.toBeNull();
+      // Same number of messages — the change is an in-place part mutation.
+      expect(tail?.totalMessageCount).toBe(2);
+      expect(tail?.deltaMessages).toEqual([]);
+      // In-place last-chunk replacement: a delta chunk with a real anchor id.
+      expect(tail?.deltaChunks.length).toBeGreaterThan(0);
+      expect(tail?.replaceFromChunkId).not.toBeNull();
+      // Cursor advanced to the new revision (NOT a no-op).
+      expect(tail?.cursor).not.toBe(summary.cursor);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // DB-backed end-to-end via the REAL resolveAdapter (NO seam stub).
+  //
+  // Proves the pull-based read path renders a real OpenCode session WITHOUT
+  // stubbing `resolveAdapter`: the session row's `providerSessionId` must thread
+  // resolveAdapter → SessionSourceRef → adapter, or `parseFullSession` throws
+  // `requireSessionId(...)`. Real SessionCacheService + real
+  // OpenCodeSessionReaderAdapter + real OpencodeSqliteReader over a fixture DB.
+  // ---------------------------------------------------------------------------
+  describe('DB-backed end-to-end via the real resolveAdapter (no seam stub)', () => {
+    const SCHEMA_SQL = `
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY, title TEXT, model TEXT, agent TEXT, parent_id TEXT,
+        directory TEXT, project_id TEXT,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL
+      );
+      CREATE INDEX part_session_idx ON part (session_id);
+    `;
+    const SES = 'ses_e2e';
+
+    let tmpDir: string;
+    let dbPath: string;
+    let realCache: SessionCacheService;
+    let dbService: SessionReaderService;
+
+    function makePricing(): jest.Mocked<PricingServiceInterface> {
+      return {
+        calculateMessageCost: jest.fn().mockReturnValue(0),
+        getContextWindowSize: jest.fn().mockReturnValue(200_000),
+      } as unknown as jest.Mocked<PricingServiceInterface>;
+    }
+
+    function seedDb(): void {
+      const db = new Database(dbPath);
+      try {
+        db.pragma('journal_mode = WAL');
+        db.exec(SCHEMA_SQL);
+        db.prepare(
+          `INSERT INTO session (id, title, model, agent, parent_id, time_created, time_updated)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(SES, 'E2E', 'glm-5.1', 'build', null, 1_000, 2_000);
+        const insMsg = db.prepare(
+          `INSERT INTO message (id, session_id, time_created, time_updated, data)
+           VALUES (?, ?, ?, ?, ?)`,
+        );
+        const insPart = db.prepare(
+          `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        );
+        insMsg.run('m_user', SES, 1_000, 1_000, JSON.stringify({ role: 'user' }));
+        insPart.run(
+          'p_user',
+          'm_user',
+          SES,
+          1_000,
+          1_000,
+          JSON.stringify({ type: 'text', text: 'hello opencode' }),
+        );
+        insMsg.run('m_asst', SES, 2_000, 2_000, JSON.stringify({ role: 'assistant' }));
+        insPart.run(
+          'p_asst',
+          'm_asst',
+          SES,
+          2_000,
+          2_000,
+          JSON.stringify({ type: 'text', text: 'hi there' }),
+        );
+      } finally {
+        db.close();
+      }
+    }
+
+    beforeEach(async () => {
+      tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-e2e-'));
+      dbPath = path.join(tmpDir, 'opencode.db');
+      seedDb();
+
+      realCache = new SessionCacheService();
+      const adapter = new OpenCodeSessionReaderAdapter(makePricing());
+
+      // Real resolveAdapter chain — NOTHING about the resolve seam is stubbed.
+      mockSessionsService.getSession.mockReturnValue({
+        id: SES,
+        agentId: 'agent-1',
+        transcriptPath: dbPath,
+        providerSessionId: SES,
+        status: 'running',
+      });
+      mockStorage.getAgent.mockResolvedValue({ id: 'agent-1', providerConfigId: 'config-1' });
+      mockStorage.getProfileProviderConfig.mockResolvedValue({
+        id: 'config-1',
+        providerId: 'provider-1',
+      });
+      mockStorage.getProvider.mockResolvedValue({ id: 'provider-1', name: 'opencode' });
+      (mockAdapterFactory.getAdapter as jest.Mock).mockReturnValue(adapter);
+      (mockPathValidator.validateForRead as jest.Mock).mockResolvedValue(dbPath);
+
+      dbService = new SessionReaderService(
+        mockAdapterFactory as unknown as SessionReaderAdapterFactory,
+        mockPathValidator as unknown as TranscriptPathValidator,
+        realCache,
+        mockSessionsService as unknown as SessionsService,
+        mockStorage as unknown as StorageService,
+        mockProviderAdapterFactory as unknown as never,
+      );
+    });
+
+    afterEach(async () => {
+      realCache?.onModuleDestroy();
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('renders summary + chunks for a real OpenCode session through the real resolve path', async () => {
+      const transcript = await dbService.getTranscript(SES);
+      expect(transcript.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+      expect(transcript.messages[1].content.some((c) => c.type === 'text')).toBe(true);
+
+      const summary = await dbService.getTranscriptSummaryWithCursor(SES);
+      expect(summary.cursor).toBeTruthy();
+
+      const chunks = await dbService.getUnifiedTranscriptChunks(SES);
+      expect(chunks.totalCount).toBe(2);
+      expect(chunks.chunks.length).toBeGreaterThan(0);
+
+      // The resolve seam was real — prove the OpenCode path was actually taken.
+      expect(mockPathValidator.validateForRead).toHaveBeenCalledWith(dbPath, 'opencode');
+    });
+
+    it('throws (not a silent no-op) when the session row has no providerSessionId — threading regression guard', async () => {
+      mockSessionsService.getSession.mockReturnValue({
+        id: SES,
+        agentId: 'agent-1',
+        transcriptPath: dbPath,
+        providerSessionId: null,
+        status: 'running',
+      });
+
+      await expect(dbService.getTranscript(SES)).rejects.toThrow(/providerSessionId/i);
     });
   });
 });

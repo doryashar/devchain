@@ -8,7 +8,6 @@ import {
   releaseWorktreeSocket,
   setAppSocket,
 } from './socket';
-import type { SocketAddress } from './socket';
 
 jest.mock('socket.io-client', () => ({
   io: jest.fn(),

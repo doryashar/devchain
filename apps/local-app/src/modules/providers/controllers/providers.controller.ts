@@ -53,6 +53,7 @@ const UpdateProviderSchema = z.object({
   autoCompactThreshold1m: z.number().int().min(1).max(100).nullable().optional(),
   oneMillionContextEnabled: z.boolean().optional(),
   env: EnvVarsSchema,
+  envScopes: z.record(z.array(z.string())).optional(),
 });
 
 const ConfigureMcpSchema = z.object({
@@ -82,7 +83,12 @@ export class ProvidersController {
   @Get()
   async listProviders() {
     logger.info('GET /api/providers');
-    return this.storage.listProviders();
+    const result = await this.storage.listProviders();
+    const scopesMap = this.storage.listEnvScopesByProviderIds(result.items.map((p) => p.id));
+    return {
+      ...result,
+      items: result.items.map((p) => ({ ...p, envScopes: scopesMap.get(p.id) ?? {} })),
+    };
   }
 
   @Post('rescan')
@@ -118,9 +124,11 @@ export class ProvidersController {
   }
 
   @Get(':id')
-  async getProvider(@Param('id') id: string): Promise<Provider> {
+  async getProvider(@Param('id') id: string) {
     logger.info({ id }, 'GET /api/providers/:id');
-    return this.storage.getProvider(id);
+    const provider = await this.storage.getProvider(id);
+    const scopesMap = this.storage.listEnvScopesByProviderIds([id]);
+    return { ...provider, envScopes: scopesMap.get(id) ?? {} };
   }
 
   @Post()
@@ -144,7 +152,7 @@ export class ProvidersController {
   }
 
   @Put(':id')
-  async updateProvider(@Param('id') id: string, @Body() body: unknown): Promise<Provider> {
+  async updateProvider(@Param('id') id: string, @Body() body: unknown) {
     logger.info({ id }, 'PUT /api/providers/:id');
     const parsed = UpdateProviderSchema.parse(body);
 
@@ -158,7 +166,8 @@ export class ProvidersController {
 
     const { provider } = await this.providerStateManager.update(id, request);
 
-    return provider;
+    const scopesMap = this.storage.listEnvScopesByProviderIds([id]);
+    return { ...provider, envScopes: scopesMap.get(id) ?? {} };
   }
 
   @Delete(':id')

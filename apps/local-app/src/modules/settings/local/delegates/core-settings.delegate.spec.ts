@@ -23,7 +23,7 @@ function createTestDb(): Database.Database {
 
 function createDelegate(db: Database.Database): CoreSettingsDelegate {
   const eventEmitter = new EventEmitter2();
-  return new CoreSettingsDelegate({ sqlite: db, eventEmitter: eventEmitter as any });
+  return new CoreSettingsDelegate({ sqlite: db, eventEmitter });
 }
 
 function upsert(db: Database.Database, key: string, value: string): void {
@@ -320,11 +320,11 @@ describe('CoreSettingsDelegate', () => {
       const eventEmitter = new EventEmitter2();
       const localDelegate = new CoreSettingsDelegate({
         sqlite: db,
-        eventEmitter: eventEmitter as any,
+        eventEmitter: eventEmitter,
       });
 
-      let emittedPayload: any = null;
-      eventEmitter.on('settings.terminal.changed', (payload: any) => {
+      let emittedPayload: unknown = null;
+      eventEmitter.on('settings.terminal.changed', (payload: unknown) => {
         emittedPayload = payload;
       });
 
@@ -337,11 +337,11 @@ describe('CoreSettingsDelegate', () => {
       const eventEmitter = new EventEmitter2();
       const localDelegate = new CoreSettingsDelegate({
         sqlite: db,
-        eventEmitter: eventEmitter as any,
+        eventEmitter: eventEmitter,
       });
 
-      let emittedPayload: any = null;
-      eventEmitter.on('settings.terminal.changed', (payload: any) => {
+      let emittedPayload: unknown = null;
+      eventEmitter.on('settings.terminal.changed', (payload: unknown) => {
         emittedPayload = payload;
       });
 
@@ -354,7 +354,7 @@ describe('CoreSettingsDelegate', () => {
       const eventEmitter = new EventEmitter2();
       const localDelegate = new CoreSettingsDelegate({
         sqlite: db,
-        eventEmitter: eventEmitter as any,
+        eventEmitter: eventEmitter,
       });
 
       let emitted = false;
