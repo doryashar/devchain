@@ -69,28 +69,32 @@ export function AutoAssignRulesCard({ projectId }: { projectId: string }) {
       getJSON(await fetch(`/api/auto-assign-rules?projectId=${projectId}`), 'Failed to load rules'),
     enabled: !!projectId,
   });
-  const { data: statuses = [] } = useQuery<Status[]>({
+  // NOTE: these query keys (['statuses'|'agents'|'teams', projectId]) are shared
+  // with other components (StatusesPage, EpicSearchInput, useBoardData, ...), all
+  // of which expect the FULL { items } response object. Do NOT extract .items
+  // inside queryFn — that would poison the shared cache with a bare array and
+  // break the other consumers. Extract .items at the consumption site instead.
+  const { data: statusesData } = useQuery<{ items: Status[] }>({
     queryKey: ['statuses', projectId],
     queryFn: async () =>
-      (
-        await getJSON(
-          await fetch(`/api/statuses?projectId=${projectId}`),
-          'Failed to load statuses',
-        )
-      ).items,
+      getJSON(await fetch(`/api/statuses?projectId=${projectId}`), 'Failed to load statuses'),
+    enabled: !!projectId,
   });
-  const { data: agents = [] } = useQuery<Agent[]>({
+  const { data: agentsData } = useQuery<{ items: Agent[] }>({
     queryKey: ['agents', projectId],
     queryFn: async () =>
-      (await getJSON(await fetch(`/api/agents?projectId=${projectId}`), 'Failed to load agents'))
-        .items,
+      getJSON(await fetch(`/api/agents?projectId=${projectId}`), 'Failed to load agents'),
+    enabled: !!projectId,
   });
-  const { data: teams = [] } = useQuery<TeamLite[]>({
+  const { data: teamsData } = useQuery<{ items: TeamLite[] }>({
     queryKey: ['teams', projectId],
     queryFn: async () =>
-      (await getJSON(await fetch(`/api/teams?projectId=${projectId}`), 'Failed to load teams'))
-        .items,
+      getJSON(await fetch(`/api/teams?projectId=${projectId}`), 'Failed to load teams'),
+    enabled: !!projectId,
   });
+  const statuses = statusesData?.items ?? [];
+  const agents = agentsData?.items ?? [];
+  const teams = teamsData?.items ?? [];
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['auto-assign-rules', projectId] });
 
