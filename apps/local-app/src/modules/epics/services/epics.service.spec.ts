@@ -23,6 +23,7 @@ describe('EpicsService', () => {
   let eventsService: { publish: jest.Mock };
   let settingsService: { getSetting: jest.Mock; getAutoCleanStatusIds: jest.Mock };
   let eventEmitter: { emit: jest.Mock };
+  let autoAssign: { resolveAssignment: jest.Mock };
   let service: EpicsService;
 
   const baseEpic: Epic = {
@@ -61,12 +62,18 @@ describe('EpicsService', () => {
       getAutoCleanStatusIds: jest.fn().mockReturnValue([]),
     };
     eventEmitter = { emit: jest.fn() };
+    autoAssign = {
+      resolveAssignment: jest
+        .fn()
+        .mockResolvedValue({ agentId: null, ruleId: null, skipped: 'no_match' }),
+    };
 
     service = new EpicsService(
       storage as unknown as StorageService,
       eventsService as unknown as EventsService,
       settingsService as unknown as SettingsService,
       eventEmitter as unknown as EventEmitter2,
+      autoAssign as any, // AutoAssignRulesService (optional)
     );
   });
 
@@ -981,6 +988,93 @@ describe('EpicsService', () => {
       storage.updateEpic.mockResolvedValue({ ...baseEpic, statusId: 'status-2', version: 2 });
       const result = await service.updateEpicWithOutcome('epic-1', { statusId: 'status-2' }, 1);
       expect(result.outcome.previousAssigneeAgent).toBeNull();
+    });
+  });
+
+  describe('auto-assign hook', () => {
+    it('fires auto-assign on createEpic when not an auto-clean status', async () => {
+      storage.createEpic.mockImplementation(async (data: any) => ({ ...baseEpic, ...data }));
+      autoAssign.resolveAssignment.mockResolvedValue({
+        agentId: 'ag-X',
+        ruleId: 'r1',
+        skipped: null,
+      });
+      settingsService.getAutoCleanStatusIds.mockReturnValue([]);
+      await service.createEpic({ ...baseEpic, agentId: undefined } as any);
+      expect(autoAssign.resolveAssignment).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'project-1', statusId: 'status-1' }),
+        'create',
+      );
+      expect(storage.createEpic).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'ag-X' }));
+    });
+
+    it('does NOT auto-assign when the target status is auto-clean', async () => {
+      storage.createEpic.mockImplementation(async (data: any) => ({ ...baseEpic, ...data }));
+      settingsService.getAutoCleanStatusIds.mockReturnValue(['status-1']); // status-1 is auto-clean
+      await service.createEpic({ ...baseEpic, agentId: undefined } as any);
+      expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
+      // applyAutoCleanIfNeeded clears agentId for auto-clean statuses
+      expect(storage.createEpic).toHaveBeenCalledWith(expect.objectContaining({ agentId: null }));
+    });
+
+    it('auto-assigns when status changes to a matching status', async () => {
+      storage.getEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'old',
+        agentId: null,
+        tags: ['x'],
+        version: 1,
+      });
+      storage.updateEpic.mockImplementation(async (_id: string, data: any) => ({
+        ...baseEpic,
+        statusId: data.statusId ?? 'old',
+        agentId: data.agentId ?? null,
+        version: 2,
+      }));
+      autoAssign.resolveAssignment.mockResolvedValue({
+        agentId: 'ag-Y',
+        ruleId: 'r2',
+        skipped: null,
+      });
+      settingsService.getAutoCleanStatusIds.mockReturnValue([]);
+      await service.updateEpic('epic-1', { statusId: 'status-2' }, 1);
+      expect(autoAssign.resolveAssignment).toHaveBeenCalledWith(
+        expect.objectContaining({ statusId: 'status-2' }),
+        'status_change',
+      );
+      expect(storage.updateEpic).toHaveBeenCalledWith(
+        'epic-1',
+        expect.objectContaining({ statusId: 'status-2', agentId: 'ag-Y' }),
+        1,
+      );
+    });
+
+    it('skips auto-assign on status change to an auto-clean status', async () => {
+      storage.getEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'old',
+        agentId: 'ag-old',
+        tags: [],
+        version: 1,
+      });
+      storage.updateEpic.mockResolvedValue({ ...baseEpic, statusId: 'done', agentId: null, version: 2 });
+      settingsService.getAutoCleanStatusIds.mockReturnValue(['done']);
+      await service.updateEpic('epic-1', { statusId: 'done' }, 1);
+      expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
+    });
+
+    it('does not auto-assign when only tags change (no status change)', async () => {
+      storage.getEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'status-1',
+        agentId: null,
+        tags: [],
+        version: 1,
+      });
+      storage.updateEpic.mockResolvedValue({ ...baseEpic, tags: ['new'], version: 2 });
+      settingsService.getAutoCleanStatusIds.mockReturnValue([]);
+      await service.updateEpic('epic-1', { tags: ['new'] } as any, 1);
+      expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
     });
   });
 });

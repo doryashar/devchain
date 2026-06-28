@@ -7,6 +7,7 @@ import { EpicsService } from './services/epics.service';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentMessageDeliveryModule } from '../agent-message-delivery/agent-message-delivery.module';
 import { TeamsModule } from '../teams/teams.module';
+import { AutoAssignRulesModule } from '../auto-assign-rules/auto-assign-rules.module';
 import { EpicAssignmentNotifierSubscriber } from './subscribers/epic-assignment-notifier.subscriber';
 import { SubEpicCreatedNotifierSubscriber } from './subscribers/sub-epic-created-notifier.subscriber';
 
@@ -17,6 +18,7 @@ import { SubEpicCreatedNotifierSubscriber } from './subscribers/sub-epic-created
     SettingsModule,
     AgentMessageDeliveryModule,
     TeamsModule,
+    AutoAssignRulesModule,
   ],
   controllers: [EpicsController, EpicCommentsController],
   providers: [EpicsService, EpicAssignmentNotifierSubscriber, SubEpicCreatedNotifierSubscriber],

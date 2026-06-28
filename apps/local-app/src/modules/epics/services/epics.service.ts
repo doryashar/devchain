@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   STORAGE_SERVICE,
@@ -11,6 +11,7 @@ import type { Epic, EpicComment, UpdateEpic, CreateEpic } from '../../storage/mo
 import { EventsService } from '../../events/services/events.service';
 import { ValidationError } from '../../../common/errors/error-types';
 import { SettingsService } from '../../settings/services/settings.service';
+import { AutoAssignRulesService } from '../../auto-assign-rules/services/auto-assign-rules.service';
 interface EpicBroadcastPayload {
   projectId: string;
   type: 'created' | 'updated' | 'deleted' | 'comment.created';
@@ -40,11 +41,24 @@ export class EpicsService {
     private readonly eventsService: EventsService,
     private readonly settingsService: SettingsService,
     private readonly eventEmitter: EventEmitter2,
+    @Optional() private readonly autoAssignRulesService?: AutoAssignRulesService,
   ) {}
 
   async createEpic(data: CreateEpic, context?: EpicOperationContext): Promise<Epic> {
     // Clear agentId if creating in an auto-clean status
     this.applyAutoCleanIfNeeded(data.projectId, data.statusId, data);
+
+    // Auto-assign via rules when no explicit agent was set
+    if (data.statusId && !data.agentId) {
+      const resolved = await this.resolveAutoAssign(
+        data.projectId,
+        data.statusId,
+        data.tags,
+        data.agentId ?? null,
+        'create',
+      );
+      if (resolved) data.agentId = resolved;
+    }
 
     const epic = await this.storage.createEpic(data);
 
@@ -123,6 +137,18 @@ export class EpicsService {
     // Clear agentId if creating in an auto-clean status
     this.applyAutoCleanIfNeeded(projectId, input.statusId, input);
 
+    // Auto-assign via rules when no explicit agent was set
+    if (input.statusId && !input.agentId) {
+      const resolved = await this.resolveAutoAssign(
+        projectId,
+        input.statusId,
+        input.tags,
+        input.agentId ?? null,
+        'create',
+      );
+      if (resolved) input.agentId = resolved;
+    }
+
     const epic = await this.storage.createEpicForProject(projectId, input);
 
     // Publish epic.created event (best-effort persisted event - failures logged but don't block create)
@@ -175,9 +201,25 @@ export class EpicsService {
       }
     }
 
-    // Clear agentId if moving to an auto-clean status
-    if (data.statusId !== undefined && data.statusId !== before.statusId) {
+    // Clear agentId if moving to an auto-clean status, and auto-assign via rules on status change.
+    // The auto-assign hook only fires on an actual status change (not tag-only edits) and is
+    // skipped when an explicit agentId is provided in the same payload or the target is auto-clean.
+    const statusChanged = data.statusId !== undefined && data.statusId !== before.statusId;
+    if (statusChanged) {
       this.applyAutoCleanIfNeeded(before.projectId, data.statusId, data);
+    }
+
+    if (statusChanged && data.agentId === undefined) {
+      const resolved = await this.resolveAutoAssign(
+        before.projectId,
+        data.statusId,
+        before.tags,
+        data.agentId ?? before.agentId,
+        'status_change',
+      );
+      if (resolved !== (data.agentId ?? before.agentId)) {
+        data.agentId = resolved;
+      }
     }
 
     const updated = await this.storage.updateEpic(id, data, expectedVersion);
@@ -485,6 +527,35 @@ export class EpicsService {
     if (autoCleanIds.includes(targetStatusId)) {
       data.agentId = null;
     }
+  }
+
+  /**
+   * Resolves the agentId for auto-assignment via AutoAssignRulesService.
+   * READ-ONLY: returns the agentId to assign; the caller performs the write.
+   *
+   * Skips (returns currentAgentId) when:
+   *  - autoAssignRulesService is undefined (e.g. not injected at runtime)
+   *  - statusId is falsy
+   *  - the target status is an auto-clean status (auto-clean wins)
+   *
+   * The caller passes the trigger explicitly ('create' | 'status_change'); the
+   * operation context — not the current agent state — determines the trigger.
+   */
+  private async resolveAutoAssign(
+    projectId: string,
+    statusId: string | undefined,
+    tags: string[] | undefined | null,
+    currentAgentId: string | null,
+    trigger: 'create' | 'status_change',
+  ): Promise<string | null> {
+    if (!this.autoAssignRulesService || !statusId) return currentAgentId;
+    const autoCleanIds = this.settingsService.getAutoCleanStatusIds(projectId);
+    if (autoCleanIds.includes(statusId)) return currentAgentId; // auto-clean wins
+    const res = await this.autoAssignRulesService.resolveAssignment(
+      { projectId, statusId, tags: tags ?? [], currentAgentId },
+      trigger,
+    );
+    return res.agentId ?? currentAgentId;
   }
 
   /**
