@@ -17,6 +17,10 @@ Auto-assign rules automatically route epics to an agent or a team's lead as epic
 2. Find the **Auto-assign rules** card and click **Add rule**.
 3. Choose match by **Status** or **Tag**, pick the target, and save.
 
+To change an existing rule, click its **edit** (pencil) button, adjust the fields, and save — this sends a `PATCH` to that rule.
+
+To change the order in which rules are evaluated, **drag a rule row by its grip handle** to a new position. The new order is saved automatically (`PUT /api/auto-assign-rules/reorder`) with sequential priorities; the first matching rule wins.
+
 You can also jump to the rules card from the board: the **Auto-assign** button in the board toolbar links straight to it.
 
 ## Stale rules
