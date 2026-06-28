@@ -35,7 +35,7 @@ Worktree containers are provisioned automatically from the official Devchain ima
 Browse and sync AI agent skills from community sources (Anthropic, OpenAI, Vercel, and more). Enable or disable skills per project and expose them to agents via MCP tools.
 
 ### Visual Workflow Board
-Kanban-style epic management with drag-and-drop, list view, board context menu, and URL-based filtering. Agents pick up tasks from the board and update status in real time.
+Kanban-style epic management with drag-and-drop, list view, board context menu, and URL-based filtering. Agents pick up tasks from the board and update status in real time. Auto-assign rules route epics to an agent or team lead automatically as they're created or move between statuses.
 
 ### Terminal Sessions
 Real terminal streaming via tmux and WebSocket. Each agent gets its own session with scrollback, resize support, and inline access from the chat panel.
