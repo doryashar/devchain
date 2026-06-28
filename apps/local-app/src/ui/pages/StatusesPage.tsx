@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/ui/lib/utils';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
+import { AutoAssignRulesCard } from '@/ui/components/board/AutoAssignRulesCard';
 
 /** Check if a status is an Archive status (label contains 'archiv', case-insensitive) */
 function isArchiveStatus(label: string): boolean {
@@ -605,6 +606,7 @@ export function StatusesPage() {
                 onDelete={handleDelete}
                 autoCleanStatusIds={autoCleanStatusIds}
               />
+              <AutoAssignRulesCard projectId={selectedProjectId} />
             </div>
           )}
         </>

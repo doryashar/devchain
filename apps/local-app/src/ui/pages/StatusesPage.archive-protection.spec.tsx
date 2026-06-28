@@ -92,6 +92,12 @@ describe('StatusesPage — Archive status protection', () => {
           json: async () => ({ autoClean: { statusIds: {} } }),
         } as Response;
       }
+      if (url.startsWith('/api/auto-assign-rules')) {
+        return { ok: true, json: async () => [] } as Response;
+      }
+      if (url.startsWith('/api/agents') || url.startsWith('/api/teams')) {
+        return { ok: true, json: async () => ({ items: [] }) } as Response;
+      }
       return { ok: true, json: async () => ({}) } as Response;
     }) as jest.Mock;
     global.fetch = fetchMock as unknown as typeof fetch;

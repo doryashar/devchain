@@ -1,4 +1,5 @@
-import { Filter, LayoutGrid, List, Settings2 } from 'lucide-react';
+import { Filter, LayoutGrid, List, Settings2, Sparkles } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/ui/components/ui/button';
 import { Badge } from '@/ui/components/ui/badge';
 import { Checkbox } from '@/ui/components/ui/checkbox';
@@ -227,6 +228,13 @@ export function BoardToolbar({
           </div>
         </PopoverContent>
       </Popover>
+
+      <Button asChild variant="outline" size="sm" aria-label="Auto-assign rules">
+        <Link to="/statuses#auto-assign">
+          <Sparkles className="h-4 w-4 mr-1.5" />
+          Auto-assign
+        </Link>
+      </Button>
     </div>
   );
 }
