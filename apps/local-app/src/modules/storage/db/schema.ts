@@ -1049,6 +1049,37 @@ export const teamProfileConfigs = sqliteTable(
 );
 
 // ============================================
+// EPIC ASSIGNMENT RULES - Per-project auto-assign rules
+// ============================================
+
+export const epicAssignmentRules = sqliteTable(
+  'epic_assignment_rules',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    matchType: text('match_type').notNull(), // 'status' | 'tag'
+    statusId: text('status_id'), // set when matchType === 'status'
+    tags: text('tags', { mode: 'json' }).$type<string[] | null>(), // set when matchType === 'tag'
+    targetType: text('target_type').notNull(), // 'agent' | 'team'
+    targetAgentId: text('target_agent_id'), // set when targetType === 'agent'
+    targetTeamId: text('target_team_id'), // set when targetType === 'team'
+    overrideExisting: integer('override_existing', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    priority: integer('priority').notNull().default(0),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => ({
+    projectIdIdx: index('epic_assignment_rules_project_id_idx').on(table.projectId),
+    statusIdIdx: index('epic_assignment_rules_status_id_idx').on(table.statusId),
+  }),
+);
+
+// ============================================
 // CODE REVIEWS - Review metadata and comments
 // ============================================
 
