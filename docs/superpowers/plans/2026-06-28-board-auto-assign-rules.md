@@ -646,7 +646,7 @@ const baseFields = {
   targetAgentId: z.string().min(1).nullable(),
   targetTeamId: z.string().min(1).nullable(),
   overrideExisting: z.boolean(),
-  priority: z.number().int(),
+  priority: z.number().int().optional(),
   enabled: z.boolean(),
 };
 
@@ -674,9 +674,15 @@ export const CreateEpicAssignmentRuleDtoSchema = z
       if (!data.targetAgentId) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetAgentId'], message: 'targetAgentId is required when targetType is "agent"' });
       }
+      if (data.targetTeamId !== null && data.targetTeamId !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetTeamId'], message: 'targetTeamId must be null when targetType is "agent"' });
+      }
     } else {
       if (!data.targetTeamId) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetTeamId'], message: 'targetTeamId is required when targetType is "team"' });
+      }
+      if (data.targetAgentId !== null && data.targetAgentId !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetAgentId'], message: 'targetAgentId must be null when targetType is "team"' });
       }
     }
   });
