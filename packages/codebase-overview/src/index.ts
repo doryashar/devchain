@@ -212,10 +212,10 @@ export interface DistrictFilePage {
 
 export interface TargetDetail {
   targetId: string;
-  name: string;
-  displayName: string;
-  category: string;
-  description: string;
+  name?: string;
+  displayName?: string;
+  category?: string;
+  description?: string;
   kind?: string;
   summary?: string;
   whyRanked?: string[];

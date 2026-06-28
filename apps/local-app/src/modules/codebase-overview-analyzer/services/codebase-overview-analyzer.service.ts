@@ -442,6 +442,8 @@ export class CodebaseOverviewAnalyzerService {
 
     const snapshot: CodebaseOverviewSnapshot = {
       snapshotId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      version: 1,
+      timestamp: new Date().toISOString(),
       projectKey: projectPath,
       name: projectPath.split(sep).pop() || projectPath,
       regions,
@@ -450,6 +452,7 @@ export class CodebaseOverviewAnalyzerService {
       hotspots,
       activity,
       metrics,
+      summary: {},
       signals,
       globalContributors,
     };

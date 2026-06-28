@@ -28,7 +28,7 @@ export function OwnershipSection({ snapshot, onSelectDistrict }: OwnershipSectio
   );
 
   const hasOwnershipData =
-    signals.some((s) => s.ownershipMeasured) || snapshot.globalContributors.length > 0;
+    signals.some((s) => s.ownershipMeasured) || (snapshot.globalContributors ?? []).length > 0;
 
   if (!hasOwnershipData) {
     return (

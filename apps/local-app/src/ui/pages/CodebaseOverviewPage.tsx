@@ -500,11 +500,11 @@ export function HotspotDetailPanel({
       <CardContent className="space-y-4">
         <p className="text-sm">{detail.summary}</p>
 
-        {detail.whyRanked.length > 0 && (
+        {(detail.whyRanked ?? []).length > 0 && (
           <div>
             <h4 className="text-sm font-medium mb-1">Why it ranked</h4>
             <ul className="space-y-1">
-              {detail.whyRanked.map((reason, i) => (
+              {(detail.whyRanked ?? []).map((reason, i) => (
                 <li key={i} className="text-sm text-muted-foreground">
                   {reason}
                 </li>
@@ -513,17 +513,19 @@ export function HotspotDetailPanel({
           </div>
         )}
 
-        {(detail.recentCommits.length > 0 || detail.topAuthors.length > 0) && <Separator />}
+        {((detail.recentCommits ?? []).length > 0 || (detail.topAuthors ?? []).length > 0) && (
+          <Separator />
+        )}
 
         <div className="grid gap-4 md:grid-cols-2">
-          {detail.recentCommits.length > 0 && (
+          {(detail.recentCommits ?? []).length > 0 && (
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <GitCommit className="h-3.5 w-3.5 text-muted-foreground" />
                 <h4 className="text-sm font-medium">Recent commits</h4>
               </div>
               <ul className="space-y-1">
-                {detail.recentCommits.map((c) => (
+                {(detail.recentCommits ?? []).map((c) => (
                   <li key={c.sha} className="text-sm text-muted-foreground truncate">
                     <span className="font-mono text-xs">{c.sha.slice(0, 7)}</span> {c.message}
                   </li>
@@ -532,14 +534,14 @@ export function HotspotDetailPanel({
             </div>
           )}
 
-          {detail.topAuthors.length > 0 && (
+          {(detail.topAuthors ?? []).length > 0 && (
             <div>
               <div className="flex items-center gap-1.5 mb-2">
                 <Users className="h-3.5 w-3.5 text-muted-foreground" />
                 <h4 className="text-sm font-medium">Top authors</h4>
               </div>
               <ul className="space-y-1">
-                {detail.topAuthors.map((a) => (
+                {(detail.topAuthors ?? []).map((a) => (
                   <li key={a.author} className="text-sm text-muted-foreground flex justify-between">
                     <span>{a.author}</span>
                     <span>{Math.round(a.share * 100)}%</span>
@@ -550,7 +552,7 @@ export function HotspotDetailPanel({
           )}
         </div>
 
-        {detail.recentActivity.length > 0 && (
+        {(detail.recentActivity ?? []).length > 0 && (
           <>
             <Separator />
             <div>
@@ -559,7 +561,7 @@ export function HotspotDetailPanel({
                 <h4 className="text-sm font-medium">Recent activity</h4>
               </div>
               <div className="grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
-                {detail.recentActivity.map((a) => (
+                {(detail.recentActivity ?? []).map((a) => (
                   <div key={a.targetId} className="flex gap-4">
                     <span>Modified today: {a.modifiedCount1d}</span>
                     <span>This week: {a.modifiedCount7d}</span>

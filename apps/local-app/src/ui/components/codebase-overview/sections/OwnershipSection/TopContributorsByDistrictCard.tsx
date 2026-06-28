@@ -43,11 +43,11 @@ export function TopContributorsByDistrictCard({
   const [openAuthors, setOpenAuthors] = useState<Set<string>>(new Set());
 
   const authors = useMemo((): AuthorEntry[] => {
-    if (snapshot.globalContributors.length === 0) return [];
+    if ((snapshot.globalContributors ?? []).length === 0) return [];
 
     const districtNameMap = new Map(snapshot.districts.map((d) => [d.id, d.name]));
 
-    const topAuthors = [...snapshot.globalContributors]
+    const topAuthors = [...(snapshot.globalContributors ?? [])]
       .sort((a, b) => b.commitCount30d - a.commitCount30d)
       .slice(0, TOP_AUTHORS);
 

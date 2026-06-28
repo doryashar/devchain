@@ -29,7 +29,7 @@ export function ChangeSection({ snapshot, onSelectDistrict }: ChangeSectionProps
     heatmapHidden &&
     acceleratingCount === 0 &&
     quietCount === 0 &&
-    snapshot.globalContributors.length === 0;
+    (snapshot.globalContributors ?? []).length === 0;
 
   return (
     <div className="space-y-6">

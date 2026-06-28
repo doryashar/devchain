@@ -12,7 +12,7 @@ export interface TopContributorsCardProps {
 export function TopContributorsCard({ snapshot }: TopContributorsCardProps) {
   const contributors = useMemo(
     () =>
-      [...snapshot.globalContributors]
+      [...(snapshot.globalContributors ?? [])]
         .sort(
           (a, b) =>
             b.commitCount30d - a.commitCount30d ||
