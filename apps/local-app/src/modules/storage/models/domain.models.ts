@@ -484,6 +484,35 @@ export type UpdateTeam = {
 };
 
 // ============================================
+// EPIC ASSIGNMENT RULES - Auto-assign rules per project
+// ============================================
+
+export type EpicAssignmentMatchType = 'status' | 'tag';
+export type EpicAssignmentTargetType = 'agent' | 'team';
+
+export interface EpicAssignmentRule {
+  id: string;
+  projectId: string;
+  matchType: EpicAssignmentMatchType;
+  statusId: string | null; // required when matchType === 'status'
+  tags: string[] | null; // required when matchType === 'tag'; rule matches if epic has any
+  targetType: EpicAssignmentTargetType;
+  targetAgentId: string | null; // required when targetType === 'agent'
+  targetTeamId: string | null; // required when targetType === 'team'; resolves to team lead at fire time
+  overrideExisting: boolean; // if false, skip when epic already has an assignee
+  priority: number; // lower fires first
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateEpicAssignmentRule = Omit<
+  EpicAssignmentRule,
+  'id' | 'createdAt' | 'updatedAt'
+>;
+export type UpdateEpicAssignmentRule = Partial<CreateEpicAssignmentRule>;
+
+// ============================================
 // CODE REVIEWS
 // ============================================
 
