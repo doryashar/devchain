@@ -106,17 +106,20 @@ export class EpicAssignmentRulesStorageDelegate extends BaseStorageDelegate {
   }
 
   async reorderEpicAssignmentRules(
-    _projectId: string,
+    projectId: string,
     items: Array<{ id: string; priority: number }>,
   ): Promise<void> {
     const { epicAssignmentRules } = await import('../../db/schema');
-    const { eq } = await import('drizzle-orm');
+    const { and, eq } = await import('drizzle-orm');
     const now = new Date().toISOString();
     for (const item of items) {
+      // Scope by projectId so a caller cannot reorder another project's rules.
       await this.db
         .update(epicAssignmentRules)
         .set({ priority: item.priority, updatedAt: now })
-        .where(eq(epicAssignmentRules.id, item.id));
+        .where(
+          and(eq(epicAssignmentRules.id, item.id), eq(epicAssignmentRules.projectId, projectId)),
+        );
     }
   }
 }

@@ -161,4 +161,23 @@ describe('EpicAssignmentRulesStorageDelegate', () => {
     const list = await delegate.listEpicAssignmentRules('proj-1');
     expect(list.map((r) => r.id)).toEqual([r2.id, r1.id]);
   });
+
+  it('reorder is scoped by projectId — cannot move another project rule', async () => {
+    const r1 = await delegate.createEpicAssignmentRule({
+      projectId: 'proj-1',
+      matchType: 'tag',
+      statusId: null,
+      tags: ['a'],
+      targetType: 'agent',
+      targetAgentId: 'a',
+      targetTeamId: null,
+      overrideExisting: false,
+      priority: 0,
+      enabled: true,
+    });
+    // Attempt reorder under a DIFFERENT projectId — must not touch r1.
+    await delegate.reorderEpicAssignmentRules('proj-other', [{ id: r1.id, priority: 99 }]);
+    const got = await delegate.getEpicAssignmentRule(r1.id);
+    expect(got?.priority).toBe(0); // unchanged
+  });
 });

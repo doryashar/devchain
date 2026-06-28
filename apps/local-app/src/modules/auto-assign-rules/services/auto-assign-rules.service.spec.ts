@@ -296,6 +296,47 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res.ruleId).toBe('r-high');
   });
+
+  it('continues past a non-override rule to let a later override rule win (already-assigned)', async () => {
+    const storage = createMockStorage([
+      {
+        id: 'r-no-override',
+        projectId: 'p',
+        matchType: 'status',
+        statusId: 'st-1',
+        tags: null,
+        targetType: 'agent',
+        targetAgentId: 'ag-A',
+        targetTeamId: null,
+        overrideExisting: false,
+        priority: 0,
+        enabled: true,
+      },
+      {
+        id: 'r-override',
+        projectId: 'p',
+        matchType: 'status',
+        statusId: 'st-1',
+        tags: null,
+        targetType: 'agent',
+        targetAgentId: 'ag-B',
+        targetTeamId: null,
+        overrideExisting: true,
+        priority: 1,
+        enabled: true,
+      },
+    ]);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
+    // Epic already assigned → r-no-override declines (continue), r-override wins.
+    const res = await svc.resolveAssignment(
+      { ...baseInput, currentAgentId: 'ag-existing' },
+      'status_change',
+    );
+    expect(res).toEqual({ agentId: 'ag-B', ruleId: 'r-override', skipped: null });
+  });
 });
 
 describe('AutoAssignRulesService CRUD', () => {
@@ -319,6 +360,7 @@ describe('AutoAssignRulesService CRUD', () => {
       },
     ]);
     storage.createEpicAssignmentRule = jest.fn().mockResolvedValue({ id: 'new' });
+    storage.getAgent = jest.fn().mockResolvedValue({ id: 'b', projectId: 'p' });
     const svc = new AutoAssignRulesService(
       storage as unknown as StorageService,
       createMockTeamsService({}) as unknown as TeamsService,
@@ -348,5 +390,27 @@ describe('AutoAssignRulesService CRUD', () => {
     expect(storage.reorderEpicAssignmentRules).toHaveBeenCalledWith('p', [
       { id: 'r1', priority: 0 },
     ]);
+  });
+
+  it('create rejects an agent target that belongs to another project', async () => {
+    const { ValidationError } = await import('../../../common/errors/error-types');
+    const storage = createMockStorage([]);
+    storage.getAgent = jest.fn().mockResolvedValue({ id: 'ag-other', projectId: 'other-project' });
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
+    await expect(
+      svc.create('p', {
+        matchType: 'tag',
+        statusId: null,
+        tags: ['x'],
+        targetType: 'agent',
+        targetAgentId: 'ag-other',
+        targetTeamId: null,
+        overrideExisting: false,
+        enabled: true,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 });

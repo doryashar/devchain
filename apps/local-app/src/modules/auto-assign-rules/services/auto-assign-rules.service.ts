@@ -46,8 +46,12 @@ export class AutoAssignRulesService {
     for (const rule of rules) {
       if (!this.ruleMatches(rule, input)) continue;
 
+      // Rule matches but declines if the epic is already assigned and this rule
+      // doesn't override. Per spec §2.1 this is a *decline* — record the reason
+      // and continue, so a later override:true rule can still win.
       if (input.currentAgentId !== null && !rule.overrideExisting) {
-        return { agentId: null, ruleId: null, skipped: 'already_assigned' };
+        if (!declineReason) declineReason = 'already_assigned';
+        continue;
       }
 
       const resolved = await this.resolveTarget(rule);
@@ -157,6 +161,14 @@ export class AutoAssignRulesService {
       if (!team || team.projectId !== projectId) {
         throw new ValidationError('Referenced team does not belong to this project', {
           teamId: data.targetTeamId,
+        });
+      }
+    }
+    if (data.targetType === 'agent' && data.targetAgentId) {
+      const agent = await this.storage.getAgent(data.targetAgentId).catch(() => null);
+      if (!agent || agent.projectId !== projectId) {
+        throw new ValidationError('Referenced agent does not belong to this project', {
+          agentId: data.targetAgentId,
         });
       }
     }
