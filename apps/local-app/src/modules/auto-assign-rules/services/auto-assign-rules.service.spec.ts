@@ -1,6 +1,9 @@
 import { AutoAssignRulesService } from './auto-assign-rules.service';
+import type { StorageService } from '../../storage/interfaces/storage.interface';
+import type { TeamsService } from '../../teams/services/teams.service';
+import type { EpicAssignmentRule } from '../../storage/models/domain.models';
 
-function createMockStorage(rules: any[]) {
+function createMockStorage(rules: EpicAssignmentRule[]) {
   return {
     listEpicAssignmentRules: jest.fn().mockResolvedValue(rules),
     getEpicAssignmentRule: jest.fn(),
@@ -13,7 +16,9 @@ function createMockStorage(rules: any[]) {
   };
 }
 
-function createMockTeamsService(teamById: Record<string, any>) {
+function createMockTeamsService(
+  teamById: Record<string, { id: string; teamLeadAgentId: string | null }>,
+) {
   return {
     getTeam: jest.fn(async (id: string) => teamById[id] ?? null),
     listTeams: jest.fn(),
@@ -44,7 +49,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res).toEqual({ agentId: 'ag-A', ruleId: 'r1', skipped: null });
   });
@@ -65,7 +73,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment(
       { ...baseInput, tags: ['ui'], statusId: 'other' },
       'create',
@@ -89,7 +100,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment(
       { ...baseInput, currentAgentId: 'ag-existing' },
       'status_change',
@@ -113,7 +127,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment(
       { ...baseInput, currentAgentId: 'old' },
       'status_change',
@@ -138,7 +155,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
       },
     ]);
     const teams = createMockTeamsService({ 'team-1': { id: 'team-1', teamLeadAgentId: 'lead-1' } });
-    const svc = new AutoAssignRulesService(storage as any, teams as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      teams as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res).toEqual({ agentId: 'lead-1', ruleId: 'r1', skipped: null });
   });
@@ -160,7 +180,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
       },
     ]);
     const teams = createMockTeamsService({ 'team-1': { id: 'team-1', teamLeadAgentId: null } });
-    const svc = new AutoAssignRulesService(storage as any, teams as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      teams as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res).toEqual({ agentId: null, ruleId: null, skipped: 'no_lead' });
   });
@@ -181,7 +204,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res).toEqual({ agentId: null, ruleId: null, skipped: 'stale_target' });
   });
@@ -202,7 +228,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput, statusId: 'st-1' }, 'create');
     expect(res).toEqual({ agentId: null, ruleId: null, skipped: 'no_match' });
   });
@@ -223,7 +252,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: false,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res.skipped).toBe('no_match');
   });
@@ -257,7 +289,10 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
         enabled: true,
       },
     ]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     const res = await svc.resolveAssignment({ ...baseInput }, 'create');
     expect(res.ruleId).toBe('r-high');
   });
@@ -284,7 +319,10 @@ describe('AutoAssignRulesService CRUD', () => {
       },
     ]);
     storage.createEpicAssignmentRule = jest.fn().mockResolvedValue({ id: 'new' });
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     await svc.create('p', {
       matchType: 'tag',
       statusId: null,
@@ -294,7 +332,7 @@ describe('AutoAssignRulesService CRUD', () => {
       targetTeamId: null,
       overrideExisting: false,
       enabled: true,
-    } as any);
+    });
     expect(storage.createEpicAssignmentRule).toHaveBeenCalledWith(
       expect.objectContaining({ priority: 4 }),
     );
@@ -302,7 +340,10 @@ describe('AutoAssignRulesService CRUD', () => {
 
   it('reorder delegates to storage with projectId guard', async () => {
     const storage = createMockStorage([]);
-    const svc = new AutoAssignRulesService(storage as any, createMockTeamsService({}) as any);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
     await svc.reorder('p', [{ id: 'r1', priority: 0 }]);
     expect(storage.reorderEpicAssignmentRules).toHaveBeenCalledWith('p', [
       { id: 'r1', priority: 0 },

@@ -2,8 +2,9 @@ import { EpicsService } from './epics.service';
 import type { StorageService } from '../../storage/interfaces/storage.interface';
 import type { EventsService } from '../../events/services/events.service';
 import type { SettingsService } from '../../settings/services/settings.service';
-import type { CreateEpic, Epic } from '../../storage/models/domain.models';
+import type { CreateEpic, Epic, UpdateEpic } from '../../storage/models/domain.models';
 import type { EventEmitter2 } from '@nestjs/event-emitter';
+import type { AutoAssignRulesService } from '../../auto-assign-rules/services/auto-assign-rules.service';
 import { ValidationError } from '../../../common/errors/error-types';
 
 describe('EpicsService', () => {
@@ -73,7 +74,7 @@ describe('EpicsService', () => {
       eventsService as unknown as EventsService,
       settingsService as unknown as SettingsService,
       eventEmitter as unknown as EventEmitter2,
-      autoAssign as any, // AutoAssignRulesService (optional)
+      autoAssign as unknown as AutoAssignRulesService,
     );
   });
 
@@ -993,14 +994,14 @@ describe('EpicsService', () => {
 
   describe('auto-assign hook', () => {
     it('fires auto-assign on createEpic when not an auto-clean status', async () => {
-      storage.createEpic.mockImplementation(async (data: any) => ({ ...baseEpic, ...data }));
+      storage.createEpic.mockImplementation(async (data: CreateEpic) => ({ ...baseEpic, ...data }));
       autoAssign.resolveAssignment.mockResolvedValue({
         agentId: 'ag-X',
         ruleId: 'r1',
         skipped: null,
       });
       settingsService.getAutoCleanStatusIds.mockReturnValue([]);
-      await service.createEpic({ ...baseEpic, agentId: undefined } as any);
+      await service.createEpic({ ...baseEpic, agentId: undefined } as unknown as CreateEpic);
       expect(autoAssign.resolveAssignment).toHaveBeenCalledWith(
         expect.objectContaining({ projectId: 'project-1', statusId: 'status-1' }),
         'create',
@@ -1009,9 +1010,9 @@ describe('EpicsService', () => {
     });
 
     it('does NOT auto-assign when the target status is auto-clean', async () => {
-      storage.createEpic.mockImplementation(async (data: any) => ({ ...baseEpic, ...data }));
+      storage.createEpic.mockImplementation(async (data: CreateEpic) => ({ ...baseEpic, ...data }));
       settingsService.getAutoCleanStatusIds.mockReturnValue(['status-1']); // status-1 is auto-clean
-      await service.createEpic({ ...baseEpic, agentId: undefined } as any);
+      await service.createEpic({ ...baseEpic, agentId: undefined } as unknown as CreateEpic);
       expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
       // applyAutoCleanIfNeeded clears agentId for auto-clean statuses
       expect(storage.createEpic).toHaveBeenCalledWith(expect.objectContaining({ agentId: null }));
@@ -1025,7 +1026,7 @@ describe('EpicsService', () => {
         tags: ['x'],
         version: 1,
       });
-      storage.updateEpic.mockImplementation(async (_id: string, data: any) => ({
+      storage.updateEpic.mockImplementation(async (_id: string, data: UpdateEpic) => ({
         ...baseEpic,
         statusId: data.statusId ?? 'old',
         agentId: data.agentId ?? null,
@@ -1057,7 +1058,12 @@ describe('EpicsService', () => {
         tags: [],
         version: 1,
       });
-      storage.updateEpic.mockResolvedValue({ ...baseEpic, statusId: 'done', agentId: null, version: 2 });
+      storage.updateEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'done',
+        agentId: null,
+        version: 2,
+      });
       settingsService.getAutoCleanStatusIds.mockReturnValue(['done']);
       await service.updateEpic('epic-1', { statusId: 'done' }, 1);
       expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
@@ -1073,7 +1079,7 @@ describe('EpicsService', () => {
       });
       storage.updateEpic.mockResolvedValue({ ...baseEpic, tags: ['new'], version: 2 });
       settingsService.getAutoCleanStatusIds.mockReturnValue([]);
-      await service.updateEpic('epic-1', { tags: ['new'] } as any, 1);
+      await service.updateEpic('epic-1', { tags: ['new'] } as unknown as UpdateEpic, 1);
       expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
     });
 
