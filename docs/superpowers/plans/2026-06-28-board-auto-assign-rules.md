@@ -1094,7 +1094,7 @@ git commit -m "feat(auto-assign): add AutoAssignRulesService resolver + CRUD wit
 - Create: `apps/local-app/src/modules/auto-assign-rules/controllers/auto-assign-rules.controller.ts`
 - Test: `apps/local-app/src/modules/auto-assign-rules/controllers/auto-assign-rules.controller.spec.ts`
 
-- [ ] **Step 1: Write the failing controller spec**
+- [x] **Step 1: Write the failing controller spec**
 
 ```ts
 import { Test, TestingModule } from '@nestjs/testing';
@@ -1170,12 +1170,12 @@ describe('AutoAssignRulesController', () => {
 });
 ```
 
-- [ ] **Step 2: Run the spec to verify it fails**
+- [x] **Step 2: Run the spec to verify it fails**
 
 Run: `pnpm --filter devchain-local-app test -- auto-assign-rules.controller.spec`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the controller**
+- [x] **Step 3: Implement the controller**
 
 ```ts
 import {
@@ -1246,17 +1246,29 @@ export class AutoAssignRulesController {
 
 Note: `Put` needs importing from `@nestjs/common` — add `Put` to the import list above.
 
-- [ ] **Step 4: Run the spec to verify it passes**
+- [x] **Step 4: Run the spec to verify it passes**
 
 Run: `pnpm --filter devchain-local-app test -- auto-assign-rules.controller.spec`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/local-app/src/modules/auto-assign-rules/controllers/auto-assign-rules.controller.ts apps/local-app/src/modules/auto-assign-rules/controllers/auto-assign-rules.controller.spec.ts
 git commit -m "feat(auto-assign): add REST controller + validation tests"
 ```
+
+> **Implementation notes (B3):**
+> - `Put` is imported from `@nestjs/common` (needed for `@Put('reorder')`).
+> - This spec exposed two latent bugs in the B1 DTO (`auto-assign-rule.dto.ts`), fixed in
+>   commit `a322dee` ("fix(auto-assign): optional priority + agent-XOR-team enforcement"):
+>   1. `priority` is now optional in the create input — the service already auto-defaults it
+>      to `max+1` (per `AutoAssignRulesService.create` + service spec). The plan/B1 had it required.
+>   2. Enforced true agent-XOR-team mutual exclusivity (the other target id must be null) —
+>      B1's `superRefine` only checked the "required" side, not the cross-check, despite
+>      commit `6d9f109`'s message claiming "agent-XOR-team constraints".
+> - Result: 6 controller tests + 12 service tests pass (18 total); lint clean for all touched
+>   files; no new typecheck errors in `auto-assign-rules`.
 
 ---
 
