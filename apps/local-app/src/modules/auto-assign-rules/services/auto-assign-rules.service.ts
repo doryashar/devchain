@@ -5,7 +5,7 @@ import type {
   CreateEpicAssignmentRule,
   UpdateEpicAssignmentRule,
 } from '../../storage/models/domain.models';
-import type { TeamsService } from '../../teams/services/teams.service';
+import { TeamsService } from '../../teams/services/teams.service';
 import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import { createLogger } from '../../../common/logging/logger';
 
