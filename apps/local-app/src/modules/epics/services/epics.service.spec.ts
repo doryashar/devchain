@@ -1076,5 +1076,29 @@ describe('EpicsService', () => {
       await service.updateEpic('epic-1', { tags: ['new'] } as any, 1);
       expect(autoAssign.resolveAssignment).not.toHaveBeenCalled();
     });
+
+    it('bulkUpdateEpics inherits auto-assign via updateEpic', async () => {
+      storage.getEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'old',
+        agentId: null,
+        tags: [],
+        version: 1,
+      });
+      storage.updateEpic.mockResolvedValue({
+        ...baseEpic,
+        statusId: 'st-2',
+        agentId: 'ag-Y',
+        version: 2,
+      });
+      autoAssign.resolveAssignment.mockResolvedValue({
+        agentId: 'ag-Y',
+        ruleId: 'r3',
+        skipped: null,
+      });
+      settingsService.getAutoCleanStatusIds.mockReturnValue([]);
+      await service.bulkUpdateEpics([{ id: 'epic-1', statusId: 'st-2', version: 1 }]);
+      expect(autoAssign.resolveAssignment).toHaveBeenCalled();
+    });
   });
 });
