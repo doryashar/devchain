@@ -101,6 +101,9 @@ import {
   UpdateConnectorSyncState,
   ConnectorFieldMapping,
   CreateConnectorFieldMapping,
+  EpicAssignmentRule,
+  CreateEpicAssignmentRule,
+  UpdateEpicAssignmentRule,
 } from '../models/domain.models';
 import { ValidationError, ConflictError } from '../../../common/errors/error-types';
 import { createLogger } from '../../../common/logging/logger';
@@ -129,6 +132,7 @@ import { TagStorageDelegate } from './delegates/tag.delegate';
 import { ScheduledEpicStorageDelegate } from './delegates/scheduled-epic.delegate';
 import { WatcherStorageDelegate } from './delegates/watcher.delegate';
 import { ConnectorStorageDelegate } from './delegates/connector.delegate';
+import { EpicAssignmentRulesStorageDelegate } from './delegates/epic_assignment_rules.delegate';
 
 const logger = createLogger('LocalStorageService');
 
@@ -161,6 +165,7 @@ export class LocalStorageService implements StorageService {
   private readonly providerModelDelegate: ProviderModelStorageDelegate;
   private readonly scheduledEpicDelegate: ScheduledEpicStorageDelegate;
   private readonly connectorDelegate: ConnectorStorageDelegate;
+  private readonly epicAssignmentRulesDelegate: EpicAssignmentRulesStorageDelegate;
 
   constructor(@Inject(DB_CONNECTION) private readonly db: BetterSQLite3Database) {
     const context = createStorageDelegateContext(this.db);
@@ -222,6 +227,7 @@ export class LocalStorageService implements StorageService {
     });
     this.scheduledEpicDelegate = new ScheduledEpicStorageDelegate(context);
     this.connectorDelegate = new ConnectorStorageDelegate(context);
+    this.epicAssignmentRulesDelegate = new EpicAssignmentRulesStorageDelegate(context);
     logger.info('LocalStorageService initialized');
   }
 
@@ -1104,5 +1110,35 @@ export class LocalStorageService implements StorageService {
 
   async deleteFieldMapping(id: string): Promise<void> {
     return this.connectorDelegate.deleteFieldMapping(id);
+  }
+
+  async listEpicAssignmentRules(projectId: string): Promise<EpicAssignmentRule[]> {
+    return this.epicAssignmentRulesDelegate.listEpicAssignmentRules(projectId);
+  }
+
+  async getEpicAssignmentRule(id: string): Promise<EpicAssignmentRule | null> {
+    return this.epicAssignmentRulesDelegate.getEpicAssignmentRule(id);
+  }
+
+  async createEpicAssignmentRule(data: CreateEpicAssignmentRule): Promise<EpicAssignmentRule> {
+    return this.epicAssignmentRulesDelegate.createEpicAssignmentRule(data);
+  }
+
+  async updateEpicAssignmentRule(
+    id: string,
+    data: UpdateEpicAssignmentRule,
+  ): Promise<EpicAssignmentRule> {
+    return this.epicAssignmentRulesDelegate.updateEpicAssignmentRule(id, data);
+  }
+
+  async deleteEpicAssignmentRule(id: string): Promise<void> {
+    return this.epicAssignmentRulesDelegate.deleteEpicAssignmentRule(id);
+  }
+
+  async reorderEpicAssignmentRules(
+    projectId: string,
+    items: Array<{ id: string; priority: number }>,
+  ): Promise<void> {
+    return this.epicAssignmentRulesDelegate.reorderEpicAssignmentRules(projectId, items);
   }
 }
