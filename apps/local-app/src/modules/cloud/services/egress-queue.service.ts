@@ -14,7 +14,6 @@ const MAX_QUEUE_SIZE = 1000;
 const MAX_DELIVERY_ATTEMPTS = 3;
 const DRAIN_INTERVAL_MS = 100;
 const BASE_BACKOFF_MS = 1000;
-const NOTIFICATIONS_SERVICE_URL = process.env.NOTIFICATIONS_SERVICE_URL || 'http://localhost:3003';
 
 interface QueueEntry {
   payload: IngestPayload;
@@ -68,7 +67,11 @@ export class EgressQueueService implements OnModuleDestroy {
     if (!token) return;
 
     try {
-      const response = await fetch(`${NOTIFICATIONS_SERVICE_URL}/api/v1/ingest/local-app`, {
+      // Read at call-time (consistent with devices-proxy / preferences-proxy /
+      // project-activity-reporter), so an env override is honored without a module reload.
+      const notificationsServiceUrl =
+        process.env.NOTIFICATIONS_SERVICE_URL || 'https://notify.devchain.cc';
+      const response = await fetch(`${notificationsServiceUrl}/api/v1/ingest/local-app`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

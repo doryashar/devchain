@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/devchain-cli)](https://www.npmjs.com/package/devchain-cli)
 [![License: Elastic-2.0](https://img.shields.io/badge/license-Elastic--2.0-blue)](LICENSE)
 
-**[Homepage](https://devchain.twitechlab.com/)** · **[Quick Start Guides](https://devchain.twitechlab.com/docs/quick-start-guide/)** · **[What's New in v0.12.0](https://devchain.twitechlab.com/releases/0.12.0/)**
+**[Homepage](https://devchain.cc/)** · **[Quick Start Guides](https://devchain.cc/docs/quick-start-guide/)** · **[What's New in v0.15.0](https://devchain.cc/releases/0.15.0/)**
 
 Devchain runs your AI coding agents as coordinated teams — each with their own terminal session, task queue, and chat. Group agents under team leads, assign epics, track progress on a visual board, and let teams scale themselves to match the workload. Supports Claude Code, Codex, Gemini CLI, and OpenCode out of the box.
 
@@ -15,6 +15,9 @@ Devchain runs your AI coding agents as coordinated teams — each with their own
 
 ### Agent Teams
 Group agents into named teams with team leads that do real management. The **Builders** team grows itself with the workload and picks the right model for each task — cheaper models for routine changes, top-tier models for harder work. The **Planning** team supports parallel planning: add multiple Architects on different models and the Brainstormer gathers independent framings from each before drafting the master plan. Choose your allowed providers per team when you create the project.
+
+### Mobile App
+Drive and monitor your agent teams from your phone, in open beta on [iOS](https://testflight.apple.com/join/VSbfE1c6) and [Android](https://play.google.com/apps/testing/com.twitech.devchain.mobile). Chat with agents, answer their AskUserQuestion prompts, reassign epics and add comments on the board, watch a live terminal viewport, and get push notifications the moment a session stops or needs your input. Everything between your PC and phone is end-to-end encrypted: the cloud relay only forwards sealed data it can't read, so your transcripts and commands stay private. Smart notifications, quiet hours, and per-project forwarding keep the noise down.
 
 ### Session Reader
 Full transcript viewer for active agent sessions, built into the Chat page. See every tool call, thinking block, and response with real-time token usage, cost tracking, and compaction events. Supports Claude Code and Codex transcripts with AI turn grouping, collapsible cards, IQR-based token hotspot detection, and keyboard navigation.
@@ -50,7 +53,7 @@ Works with Claude Code, OpenAI Codex, Google Gemini CLI, GLM models, and OpenCod
 Full Model Context Protocol support. Agents get access to epics, chat, skills, reviews, and more through MCP tools — auto-configured before each session.
 
 ### Local-First
-All data stored in a local SQLite database. No cloud account required, no data leaving your machine.
+All data is stored in a local SQLite database and the platform runs entirely on your machine. No cloud account is required to use it. If you opt into the mobile app, your PC and phone connect through an end-to-end encrypted relay, so even then your plaintext data never leaves your devices.
 
 ---
 
@@ -96,12 +99,11 @@ devchain start --host 0.0.0.0
 devchain stop
 ```
 
-On first run, import a template from the project page to provision your agent team. Three templates are included:
+On first run, import a template from the project page to provision your agent team. Two templates are included:
 
 | Template | Agents | Best for |
 |----------|--------|----------|
 | `teams-dev` **(recommended)** | Planning team (Brainstormer + Architect), Builders team (Epic Manager + Coders), Code Reviewer | New projects — auto-scaling Builders, parallel planning, tier-aware routing |
-| `5-agents-dev` | Brainstormer, Epic Manager, SubBSM, Coder, Code Reviewer | The classic flat workflow (still bundled and supported) |
 | `3-agents-dev` | Brainstormer, SubBSM, Coder | Faster iteration with lower token overhead |
 
 ---

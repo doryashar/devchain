@@ -76,14 +76,63 @@ describe('HooksController', () => {
       expect(mockHooksService.handleHookEvent).not.toHaveBeenCalled();
     });
 
-    it('should accept unknown hookEventName and delegate to service', async () => {
-      mockHooksService.handleHookEvent.mockResolvedValue({ ok: true, handled: false, data: {} });
-
+    it('should return 400 for an unknown hookEventName (no matching union variant)', async () => {
       const payload = { ...validPayload, hookEventName: 'UnknownEvent' };
+
+      await expect(controller.receiveHookEvent(payload)).rejects.toThrow(BadRequestException);
+      expect(mockHooksService.handleHookEvent).not.toHaveBeenCalled();
+    });
+
+    it('should accept a valid PreToolUse(AskUserQuestion) payload and delegate', async () => {
+      const payload = {
+        hookEventName: 'PreToolUse',
+        claudeSessionId: 'claude-session-1',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'toolu_abc',
+        toolInput: {
+          questions: [
+            {
+              question: 'Which?',
+              header: 'Color',
+              multiSelect: false,
+              options: [{ label: 'Red', description: 'r' }],
+            },
+          ],
+        },
+        tmuxSessionName: 'devchain-test-session',
+        projectId: '11111111-1111-1111-1111-111111111111',
+        agentId: '22222222-2222-2222-2222-222222222222',
+        sessionId: '33333333-3333-3333-3333-333333333333',
+      };
+
       const result = await controller.receiveHookEvent(payload);
 
-      expect(result).toEqual({ ok: true, handled: false, data: {} });
-      expect(mockHooksService.handleHookEvent).toHaveBeenCalled();
+      expect(result).toEqual({ ok: true, handled: true, data: {} });
+      expect(mockHooksService.handleHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ hookEventName: 'PreToolUse', toolUseId: 'toolu_abc' }),
+      );
+    });
+
+    it('should accept a valid PostToolUse(AskUserQuestion) payload with object toolResponse', async () => {
+      const payload = {
+        hookEventName: 'PostToolUse',
+        claudeSessionId: 'claude-session-1',
+        toolName: 'AskUserQuestion',
+        toolUseId: 'toolu_abc',
+        toolInput: { questions: [] },
+        toolResponse: { truncated: true, length: 50000 },
+        tmuxSessionName: 'devchain-test-session',
+        projectId: '11111111-1111-1111-1111-111111111111',
+        agentId: '22222222-2222-2222-2222-222222222222',
+        sessionId: '33333333-3333-3333-3333-333333333333',
+      };
+
+      const result = await controller.receiveHookEvent(payload);
+
+      expect(result).toEqual({ ok: true, handled: true, data: {} });
+      expect(mockHooksService.handleHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ hookEventName: 'PostToolUse' }),
+      );
     });
 
     it('should accept payload with optional fields omitted', async () => {

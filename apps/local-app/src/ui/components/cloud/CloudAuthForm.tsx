@@ -84,12 +84,7 @@ export function CloudAuthForm({
 
   return (
     <div className="space-y-3">
-      <div>
-        <p className="text-sm font-medium">Connect to DevChain Cloud</p>
-        <p className="text-xs text-muted-foreground mt-0.5">Sign in to enable cloud features</p>
-      </div>
-
-      <Button variant="default" size="sm" className="w-full" onClick={handleOAuth}>
+      <Button variant="default" size="default" className="w-full" onClick={handleOAuth}>
         Sign in with GitHub
       </Button>
 
@@ -113,13 +108,13 @@ export function CloudAuthForm({
             placeholder="Email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="h-8 text-sm"
+            className="h-9 text-sm"
             required
           />
           <Button
             type="submit"
             variant="outline"
-            size="sm"
+            size="default"
             className="w-full"
             disabled={magicLinkState === 'sending'}
           >
@@ -142,12 +137,12 @@ export function CloudAuthForm({
 
       <Button
         variant="outline"
-        size="sm"
+        size="default"
         className="w-full"
         onClick={() => setAuthMode('qr')}
         data-testid="qr-sign-in-button"
       >
-        <QrCode className="mr-2 h-3.5 w-3.5" />
+        <QrCode className="mr-2 h-4 w-4" />
         Sign in with QR code
       </Button>
     </div>

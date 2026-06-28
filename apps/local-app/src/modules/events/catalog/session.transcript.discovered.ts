@@ -8,6 +8,8 @@ export const sessionTranscriptDiscoveredEvent = {
     projectId: z.string().min(1),
     transcriptPath: z.string().min(1),
     providerName: z.string().min(1),
+    /** Provider session id (e.g. `ses_…`); required by DB-backed watchers. */
+    providerSessionId: z.string().optional(),
   }),
 } as const;
 

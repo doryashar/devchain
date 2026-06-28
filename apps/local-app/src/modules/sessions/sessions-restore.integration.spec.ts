@@ -128,7 +128,7 @@ describe('POST /api/sessions/:id/restore', () => {
 
   const mockTerminalIO = {
     createEmptySession: jest.fn().mockResolvedValue({ name: 'tmux-session' }),
-    disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+    setAlternateScreen: jest.fn().mockResolvedValue(undefined),
     destroySession: jest.fn().mockResolvedValue(undefined),
     typeCommand: jest.fn().mockResolvedValue(undefined),
     waitForOutput: jest.fn().mockResolvedValue(true),

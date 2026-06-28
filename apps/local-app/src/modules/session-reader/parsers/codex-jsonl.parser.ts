@@ -104,6 +104,12 @@ interface AssistantBuffer {
   timestamp: Date;
   content: UnifiedContentBlock[];
   toolCalls: UnifiedToolCall[];
+  /**
+   * Tool results folded into the OPEN turn while it is still accumulating across rounds.
+   * A sequential N-round tool turn coalesces into ONE assistant message, so results land
+   * here (not on a per-round flushed message) and are emitted with the buffer at flush.
+   */
+  toolResults: UnifiedToolResult[];
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +203,12 @@ export async function parseCodexJsonl(
   // Assistant buffer for coalescing consecutive assistant items
   let assistantBuffer: AssistantBuffer | null = null;
 
-  // Pending tool results (function_call_output items to attach to the next user message)
+  // Reference to the most recently flushed assistant message. Tool results are
+  // folded INTO this message (matching Claude/OpenCode turn semantics) so that
+  // metrics.messageCount counts conversational turns, not per-result messages.
+  let lastAssistantMessage: UnifiedMessage | null = null;
+
+  // Pending tool results (function_call_output items to fold into the assistant turn)
   let pendingToolResults: UnifiedToolResult[] = [];
   let pendingToolResultContent: UnifiedContentBlock[] = [];
 
@@ -223,7 +234,11 @@ export async function parseCodexJsonl(
 
   function flushAssistantBuffer(): void {
     if (!assistantBuffer) return;
-    if (assistantBuffer.content.length === 0 && assistantBuffer.toolCalls.length === 0) {
+    if (
+      assistantBuffer.content.length === 0 &&
+      assistantBuffer.toolCalls.length === 0 &&
+      assistantBuffer.toolResults.length === 0
+    ) {
       assistantBuffer = null;
       return;
     }
@@ -236,12 +251,13 @@ export async function parseCodexJsonl(
       content: assistantBuffer.content,
       model: primaryModel || undefined,
       toolCalls: assistantBuffer.toolCalls,
-      toolResults: [],
+      toolResults: assistantBuffer.toolResults,
       isMeta: false,
       isSidechain: false,
     };
 
     messages.push(msg);
+    lastAssistantMessage = msg;
     if (turnStack.length > 0) {
       turnStack[turnStack.length - 1].lastAssistantMsgIndex = messages.length - 1;
     }
@@ -252,27 +268,54 @@ export async function parseCodexJsonl(
   function flushPendingToolResults(ts: Date): void {
     if (pendingToolResults.length === 0) return;
 
-    const msg: UnifiedMessage = {
-      id: `codex-msg-${messageIndex++}`,
-      parentId: messages.length > 0 ? messages[messages.length - 1].id : null,
-      role: 'user',
-      timestamp: ts,
-      content: pendingToolResultContent,
-      toolCalls: [],
-      toolResults: pendingToolResults,
-      isMeta: true,
-      isSidechain: false,
-    };
+    // Fold tool results into the assistant turn so metrics.messageCount counts
+    // conversational turns (cross-provider invariant — Claude/OpenCode do the same).
+    // PREFER the still-OPEN assistant buffer: a sequential tool turn coalesces across
+    // rounds into ONE assistant, and the results must land on that buffer (the next item's
+    // flushPendingToolResults fires mid-turn while the buffer is still open — folding into
+    // a null lastAssistantMessage here would synthesize a phantom user message and lose
+    // ordering). Fall back to the last flushed assistant for a trailing result at a turn
+    // boundary; only synthesize a user-role message when neither exists.
+    if (assistantBuffer) {
+      assistantBuffer.content.push(...pendingToolResultContent);
+      assistantBuffer.toolResults.push(...pendingToolResults);
+      // No token accounting here: the buffer is still OPEN, so flushAssistantBuffer will
+      // count the WHOLE coalesced content (estimateMessageTokens(msg.content)) — which now
+      // includes these tool-result blocks — when it flushes. Counting here too would
+      // double-count the tool-result tokens in visibleContextTokens.
+    } else if (lastAssistantMessage) {
+      lastAssistantMessage.content.push(...pendingToolResultContent);
+      lastAssistantMessage.toolResults.push(...pendingToolResults);
+      // The fold target was ALREADY flushed (its content counted at flush time), so the
+      // newly-appended tool-result blocks must be counted now or they go untracked.
+      visibleContextTokens += estimateMessageTokens(pendingToolResultContent);
+    } else {
+      // Edge case: tool results with no preceding assistant (malformed transcript or an
+      // incremental slice that started mid-turn). Preserve the data in a fallback
+      // user-role message so it still renders.
+      const msg: UnifiedMessage = {
+        id: `codex-msg-${messageIndex++}`,
+        parentId: messages.length > 0 ? messages[messages.length - 1].id : null,
+        role: 'user',
+        timestamp: ts,
+        content: pendingToolResultContent,
+        toolCalls: [],
+        toolResults: pendingToolResults,
+        isMeta: true,
+        isSidechain: false,
+      };
 
-    messages.push(msg);
-    visibleContextTokens += estimateMessageTokens(msg.content);
+      messages.push(msg);
+      visibleContextTokens += estimateMessageTokens(msg.content);
+    }
+
     pendingToolResults = [];
     pendingToolResultContent = [];
   }
 
   function ensureAssistantBuffer(ts: Date): AssistantBuffer {
     if (!assistantBuffer) {
-      assistantBuffer = { timestamp: ts, content: [], toolCalls: [] };
+      assistantBuffer = { timestamp: ts, content: [], toolCalls: [], toolResults: [] };
     }
     return assistantBuffer;
   }
@@ -369,6 +412,9 @@ export async function parseCodexJsonl(
                 flushAssistantBuffer();
                 // Flush pending tool results before user message
                 flushPendingToolResults(ts);
+                // Turn boundary: a real user prompt ends the assistant turn, so a later
+                // stray tool_result must not fold back into the pre-prompt assistant.
+                lastAssistantMessage = null;
 
                 const textParts = contentItems
                   .filter((c) => c.type === 'input_text' && c.text)
@@ -483,9 +529,10 @@ export async function parseCodexJsonl(
             case 'function_call_output': {
               if (!includeToolCalls) break;
 
-              // Flush assistant buffer so tool results come after the tool call
-              flushAssistantBuffer();
-
+              // Do NOT flush here — the assistant buffer must keep accumulating so a
+              // sequential N-round tool turn coalesces into ONE assistant message. The
+              // result is queued in `pending` and folded onto the OPEN buffer (after its
+              // tool_call) by the next item's flushPendingToolResults / at the turn boundary.
               const callId = payload.call_id as string | undefined;
               const output = (payload.output as string) ?? '';
 
@@ -533,12 +580,16 @@ export async function parseCodexJsonl(
 
             case 'task_complete':
             case 'turn_complete': {
-              // Flush remaining assistant buffer at turn end
+              // Flush remaining assistant buffer at turn end (the trailing tool_result, if
+              // any, folds onto the just-flushed assistant via lastAssistantMessage).
               flushAssistantBuffer();
               flushPendingToolResults(ts);
               if (turnStack.length > 0) {
                 attachTurnUsage(turnStack.pop()!);
               }
+              // Turn boundary: end the assistant turn so the next turn's content starts a
+              // fresh coalesced message.
+              lastAssistantMessage = null;
               openTurns = Math.max(0, openTurns - 1);
               if (openTurns === 0) lastTurnComplete = true;
               break;
@@ -573,6 +624,7 @@ export async function parseCodexJsonl(
             case 'context_compacted': {
               flushAssistantBuffer();
               flushPendingToolResults(ts);
+              lastAssistantMessage = null; // compaction is a turn boundary
               compactionCount++;
               visibleContextTokens = 0;
               break;
@@ -591,6 +643,7 @@ export async function parseCodexJsonl(
         case 'compacted': {
           flushAssistantBuffer();
           flushPendingToolResults(ts);
+          lastAssistantMessage = null; // compaction is a turn boundary
           compactionCount++;
           visibleContextTokens = 0;
 

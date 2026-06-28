@@ -150,6 +150,7 @@ describe('TerminalSession', () => {
       const result = session.resize('client-1', { cols: 120, rows: 40 });
 
       expect(result.applied).toBe(true);
+      expect(result.ptyDimensions).toEqual({ cols: 120, rows: 40 });
     });
 
     it('debounces rapid resize calls', () => {
@@ -162,10 +163,32 @@ describe('TerminalSession', () => {
 
       expect(second.applied).toBe(false);
       expect(second.reason).toBe('debounced');
+      expect(second.ptyDimensions).toEqual({ cols: 120, rows: 40 });
 
       jest.runAllTimers();
       expect(session.getDimensions()).toEqual({ cols: 120, rows: 40 });
       jest.useRealTimers();
+    });
+
+    it('keeps restore resize when a shrink is pending', () => {
+      jest.useFakeTimers();
+      try {
+        const session = createSession();
+        session.subscribe('client-1');
+
+        const shrink = session.resize('client-1', { cols: 80, rows: 23 });
+        const restore = session.resize('client-1', { cols: 80, rows: 24 });
+
+        expect(shrink.ptyDimensions).toEqual({ cols: 80, rows: 23 });
+        expect(restore.applied).toBe(false);
+        expect(restore.reason).toBe('debounced');
+        expect(restore.ptyDimensions).toEqual({ cols: 80, rows: 24 });
+
+        jest.runAllTimers();
+        expect(session.getDimensions()).toEqual({ cols: 80, rows: 24 });
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 
@@ -337,6 +360,29 @@ describe('Unified seed_ansi protocol', () => {
     expect(payload.hasHistory).toBe(true);
   });
 
+  it('advertises hasHistory=false for an alt-screen session (no scroll-up affordance)', async () => {
+    const mockIO: TerminalIORef = {
+      captureHistory: jest.fn().mockResolvedValue({ ok: true, output: 'tui-screen' }),
+    };
+    const session = new TerminalSession({
+      sessionId: 'seed-alt',
+      tmuxSessionName: 'tmux-seed-alt',
+    });
+    session.bindIO(mockIO);
+    session.setUsesAlternateScreen(true);
+
+    const frames: FrameEvent[] = [];
+    session.stream.on('frame', (f) => frames.push(f));
+
+    session.subscribe('client-1');
+    await new Promise((r) => setTimeout(r, 50));
+
+    const seedFrames = frames.filter((f) => f.type === 'seed_ansi');
+    expect(seedFrames).toHaveLength(1);
+    const payload = seedFrames[0].payload as { hasHistory?: boolean };
+    expect(payload.hasHistory).toBe(false);
+  });
+
   it('emits same chunked seed_ansi for all providers (no strategy branching)', async () => {
     const mockIO: TerminalIORef = {
       captureHistory: jest.fn().mockResolvedValue({ ok: true, output: 'capture' }),
@@ -359,6 +405,54 @@ describe('Unified seed_ansi protocol', () => {
     const payload = seedFrames[0].payload as { data: string; chunk: number; totalChunks: number };
     expect(payload.data).toBe('capture');
     expect(payload.totalChunks).toBe(1);
+  });
+
+  it('includes captured cursor position in final seed chunk', async () => {
+    const mockIO: TerminalIORef = {
+      captureHistory: jest.fn().mockResolvedValue({ ok: true, output: 'capture' }),
+      getCursorPosition: jest.fn().mockResolvedValue({ x: 7, y: 8 }),
+    };
+    const session = new TerminalSession({
+      sessionId: 'seed-cursor',
+      tmuxSessionName: 'tmux-seed-cursor',
+    });
+    session.bindIO(mockIO);
+
+    const frames: FrameEvent[] = [];
+    session.stream.on('frame', (f) => frames.push(f));
+
+    session.subscribe('client-1');
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const seedFrame = frames.find((f) => f.type === 'seed_ansi');
+    expect(seedFrame).toBeDefined();
+    expect(seedFrame!.payload).toEqual(expect.objectContaining({ cursorX: 7, cursorY: 8 }));
+  });
+
+  it('strips one capture separator before emitting initial seed', async () => {
+    const mockIO: TerminalIORef = {
+      captureHistory: jest.fn().mockResolvedValue({
+        ok: true,
+        output: 'line 1\r\nline 2\r\n\r\n',
+      }),
+    };
+    const session = new TerminalSession({
+      sessionId: 'seed-trailing-newline',
+      tmuxSessionName: 'tmux-trailing-newline',
+    });
+    session.bindIO(mockIO);
+
+    const frames: FrameEvent[] = [];
+    session.stream.on('frame', (f) => frames.push(f));
+
+    session.subscribe('client-1');
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const seedFrame = frames.find((f) => f.type === 'seed_ansi');
+    expect(seedFrame).toBeDefined();
+    expect((seedFrame!.payload as { data: string }).data).toBe('line 1\r\nline 2\r\n');
   });
 
   it('large content is chunked into multiple seed_ansi frames', async () => {

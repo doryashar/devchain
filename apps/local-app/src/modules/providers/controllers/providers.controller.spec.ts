@@ -16,7 +16,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { ValidationError } from '../../../common/errors/error-types';
+import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import {
   disableClaudeAutoCompact,
   enableClaudeAutoCompact,
@@ -60,9 +60,14 @@ describe('ProvidersController', () => {
   let storage: {
     createProvider: jest.Mock;
     updateProvider: jest.Mock;
+    updateProviderWithScopes: jest.Mock;
     updateProviderMcpMetadata: jest.Mock;
     getProvider: jest.Mock;
+    listProviders: jest.Mock;
     listAgentProfiles: jest.Mock;
+    getProject: jest.Mock;
+    listProjects: jest.Mock;
+    listEnvScopesByProviderIds: jest.Mock;
     deleteProvider: jest.Mock;
   };
   let mcpRegistration: {
@@ -83,9 +88,39 @@ describe('ProvidersController', () => {
     storage = {
       createProvider: jest.fn(),
       updateProvider: jest.fn(),
+      updateProviderWithScopes: jest.fn().mockImplementation(async (id, payload) => ({
+        id,
+        name: 'claude',
+        binPath: null,
+        mcpConfigured: false,
+        mcpEndpoint: null,
+        mcpRegisteredAt: null,
+        oneMillionContextEnabled: false,
+        autoCompactThreshold: null,
+        env: null,
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+        ...payload,
+      })),
       updateProviderMcpMetadata: jest.fn(),
-      getProvider: jest.fn(),
+      getProvider: jest.fn().mockResolvedValue({
+        id: 'p1',
+        name: 'claude',
+        binPath: null,
+        mcpConfigured: false,
+        mcpEndpoint: null,
+        mcpRegisteredAt: null,
+        oneMillionContextEnabled: false,
+        autoCompactThreshold: null,
+        env: null,
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      }),
+      listProviders: jest.fn(),
       listAgentProfiles: jest.fn().mockResolvedValue({ items: [] }),
+      getProject: jest.fn().mockRejectedValue(new NotFoundError('Project')),
+      listProjects: jest.fn().mockResolvedValue({ items: [] }),
+      listEnvScopesByProviderIds: jest.fn().mockReturnValue(new Map()),
       deleteProvider: jest.fn(),
     };
 
@@ -368,7 +403,7 @@ describe('ProvidersController', () => {
 
   describe('updateProvider', () => {
     it('updates provider without auto-re-registering MCP', async () => {
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -385,16 +420,18 @@ describe('ProvidersController', () => {
       });
 
       expect(mcpRegistration.registerProvider).not.toHaveBeenCalled();
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           mcpEndpoint: 'ws://localhost:5000',
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
     it('passes autoCompactThreshold to storage on update', async () => {
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -411,17 +448,19 @@ describe('ProvidersController', () => {
         autoCompactThreshold: 15,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           autoCompactThreshold: 15,
         }),
+        undefined,
+        expect.any(Array),
       );
       expect(result.autoCompactThreshold).toBe(15);
     });
 
     it('clears autoCompactThreshold when set to null', async () => {
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -438,11 +477,13 @@ describe('ProvidersController', () => {
         autoCompactThreshold: null,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           autoCompactThreshold: null,
         }),
+        undefined,
+        expect.any(Array),
       );
       expect(result.autoCompactThreshold).toBeNull();
     });
@@ -455,7 +496,7 @@ describe('ProvidersController', () => {
         mcpConfigured: false,
         env: null,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -469,11 +510,13 @@ describe('ProvidersController', () => {
         env: { NEW_VAR: 'value' },
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           env: { NEW_VAR: 'value' },
         }),
+        undefined,
+        ['NEW_VAR'],
       );
       expect(result.env).toEqual({ NEW_VAR: 'value' });
     });
@@ -486,7 +529,7 @@ describe('ProvidersController', () => {
         mcpConfigured: false,
         env: { OLD: 'value' },
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -501,11 +544,13 @@ describe('ProvidersController', () => {
         env: null,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           env: null,
         }),
+        undefined,
+        [],
       );
       expect(result.env).toBeNull();
     });
@@ -517,7 +562,7 @@ describe('ProvidersController', () => {
         }),
       ).rejects.toThrow();
 
-      expect(storage.updateProvider).not.toHaveBeenCalled();
+      expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
     });
 
     it('allows oneMillionContextEnabled=true with valid server probe proof', async () => {
@@ -532,7 +577,7 @@ describe('ProvidersController', () => {
         createdAt: '2024-01-01',
         updatedAt: '2024-01-01',
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -552,9 +597,11 @@ describe('ProvidersController', () => {
         oneMillionContextEnabled: true,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({ oneMillionContextEnabled: true }),
+        undefined,
+        expect.any(Array),
       );
       expect(result.oneMillionContextEnabled).toBe(true);
     });
@@ -578,7 +625,7 @@ describe('ProvidersController', () => {
         }),
       ).rejects.toThrow(ValidationError);
 
-      expect(storage.updateProvider).not.toHaveBeenCalled();
+      expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
     });
 
     it('rejects oneMillionContextEnabled=true when binPath changed after probe (stale proof)', async () => {
@@ -605,7 +652,7 @@ describe('ProvidersController', () => {
         }),
       ).rejects.toThrow(ValidationError);
 
-      expect(storage.updateProvider).not.toHaveBeenCalled();
+      expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
     });
 
     it('rejects forged probeConfirmed boolean in request body on update', async () => {
@@ -629,11 +676,11 @@ describe('ProvidersController', () => {
         } as Record<string, unknown>),
       ).rejects.toThrow(ValidationError);
 
-      expect(storage.updateProvider).not.toHaveBeenCalled();
+      expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
     });
 
     it('allows oneMillionContextEnabled=false without server proof', async () => {
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -650,9 +697,11 @@ describe('ProvidersController', () => {
         oneMillionContextEnabled: false,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({ oneMillionContextEnabled: false }),
+        undefined,
+        expect.any(Array),
       );
     });
     it('auto-disables oneMillionContextEnabled when binPath changes on already-enabled Claude provider', async () => {
@@ -667,7 +716,7 @@ describe('ProvidersController', () => {
         createdAt: '2024-01-01',
         updatedAt: '2024-01-01',
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/opt/new-claude/bin/claude',
@@ -688,13 +737,15 @@ describe('ProvidersController', () => {
         binPath: '/opt/new-claude/bin/claude',
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           binPath: '/opt/new-claude/bin/claude',
           oneMillionContextEnabled: false,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
       expect(result.oneMillionContextEnabled).toBe(false);
 
@@ -715,7 +766,7 @@ describe('ProvidersController', () => {
         createdAt: '2024-01-01',
         updatedAt: '2024-01-01',
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'codex',
         binPath: '/opt/new/codex',
@@ -733,7 +784,12 @@ describe('ProvidersController', () => {
       });
 
       // Should NOT include oneMillionContextEnabled in the payload
-      expect(storage.updateProvider).toHaveBeenCalledWith('p1', { binPath: '/opt/new/codex' });
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+        'p1',
+        { binPath: '/opt/new/codex' },
+        undefined,
+        expect.any(Array),
+      );
     });
 
     it('does not auto-disable when binPath unchanged on already-enabled Claude provider', async () => {
@@ -748,7 +804,7 @@ describe('ProvidersController', () => {
         createdAt: '2024-01-01',
         updatedAt: '2024-01-01',
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         id,
         name: 'claude',
         binPath: '/usr/local/bin/claude',
@@ -769,9 +825,12 @@ describe('ProvidersController', () => {
       });
 
       // Should NOT include oneMillionContextEnabled in the payload
-      expect(storage.updateProvider).toHaveBeenCalledWith('p1', {
-        binPath: '/usr/local/bin/claude',
-      });
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+        'p1',
+        { binPath: '/usr/local/bin/claude' },
+        undefined,
+        expect.any(Array),
+      );
     });
 
     it('full reprobe cycle: binPath change auto-disables, then reprobe + enable succeeds for new path', async () => {
@@ -788,7 +847,7 @@ describe('ProvidersController', () => {
         updatedAt: '2024-01-01',
       };
       storage.getProvider.mockResolvedValue(existingProvider);
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         ...payload,
         id,
@@ -801,13 +860,15 @@ describe('ProvidersController', () => {
         binPath: '/opt/new-claude/bin/claude',
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           binPath: '/opt/new-claude/bin/claude',
           oneMillionContextEnabled: false,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
       expect(probeProofService.hasValidProof('p1', '/usr/local/bin/claude')).toBe(false);
       expect(probeProofService.hasValidProof('p1', '/opt/new-claude/bin/claude')).toBe(false);
@@ -829,8 +890,8 @@ describe('ProvidersController', () => {
       expect(probeProofService.hasValidProof('p1', '/opt/new-claude/bin/claude')).toBe(true);
 
       // Step 4: enable 1M with new proof — should succeed
-      storage.updateProvider.mockClear();
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockClear();
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         binPath: '/opt/new-claude/bin/claude',
         oneMillionContextEnabled: true,
@@ -843,13 +904,15 @@ describe('ProvidersController', () => {
       });
 
       expect(result.oneMillionContextEnabled).toBe(true);
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold1m: 50,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -867,7 +930,7 @@ describe('ProvidersController', () => {
         updatedAt: '2024-01-01',
       };
       storage.getProvider.mockResolvedValue(existingProvider);
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         ...payload,
         id,
@@ -879,13 +942,15 @@ describe('ProvidersController', () => {
         oneMillionContextEnabled: true,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold1m: 50,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -902,7 +967,7 @@ describe('ProvidersController', () => {
         updatedAt: '2024-01-01',
       };
       storage.getProvider.mockResolvedValue(existingProvider);
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         ...payload,
         id,
@@ -912,12 +977,14 @@ describe('ProvidersController', () => {
         oneMillionContextEnabled: false,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: false,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -934,7 +1001,7 @@ describe('ProvidersController', () => {
         updatedAt: '2024-01-01',
       };
       storage.getProvider.mockResolvedValue(existingProvider);
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         ...payload,
         id,
@@ -947,12 +1014,14 @@ describe('ProvidersController', () => {
         autoCompactThreshold: 60,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold: 60,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -969,7 +1038,7 @@ describe('ProvidersController', () => {
         updatedAt: '2024-01-01',
       };
       storage.getProvider.mockResolvedValue(existingProvider);
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...existingProvider,
         ...payload,
         id,
@@ -980,12 +1049,14 @@ describe('ProvidersController', () => {
         autoCompactThreshold: 80,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: false,
           autoCompactThreshold: 80,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -1528,7 +1599,7 @@ describe('ProvidersController', () => {
         ...baseProvider,
         autoCompactThreshold: null,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...baseProvider,
         autoCompactThreshold: null,
         ...payload,
@@ -1538,13 +1609,15 @@ describe('ProvidersController', () => {
 
       await controller.updateProvider('p1', { oneMillionContextEnabled: true });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold1m: 50,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -1553,7 +1626,7 @@ describe('ProvidersController', () => {
         ...baseProvider,
         autoCompactThreshold: 85,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...baseProvider,
         autoCompactThreshold: 85,
         ...payload,
@@ -1563,7 +1636,7 @@ describe('ProvidersController', () => {
 
       await controller.updateProvider('p1', { oneMillionContextEnabled: true });
 
-      const call = storage.updateProvider.mock.calls[0][1] as Record<string, unknown>;
+      const call = storage.updateProviderWithScopes.mock.calls[0][1] as Record<string, unknown>;
       expect(call.autoCompactThreshold1m).toBe(50);
       // Standard threshold must not be touched — autoCompactThreshold should be absent from payload
       expect(call).not.toHaveProperty('autoCompactThreshold');
@@ -1574,7 +1647,7 @@ describe('ProvidersController', () => {
         ...baseProvider,
         autoCompactThreshold: null,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...baseProvider,
         autoCompactThreshold: null,
         ...payload,
@@ -1587,12 +1660,14 @@ describe('ProvidersController', () => {
         autoCompactThreshold1m: 60,
       });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold1m: 60,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -1603,7 +1678,7 @@ describe('ProvidersController', () => {
         autoCompactThreshold: null,
         autoCompactThreshold1m: 50,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...baseProvider,
         oneMillionContextEnabled: false,
         autoCompactThreshold: 95,
@@ -1614,13 +1689,15 @@ describe('ProvidersController', () => {
 
       await controller.updateProvider('p1', { oneMillionContextEnabled: false });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           oneMillionContextEnabled: false,
           autoCompactThreshold1m: null,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
 
@@ -1631,7 +1708,7 @@ describe('ProvidersController', () => {
         autoCompactThreshold: null,
         autoCompactThreshold1m: 50,
       });
-      storage.updateProvider.mockImplementation(async (id, payload) => ({
+      storage.updateProviderWithScopes.mockImplementation(async (id, payload) => ({
         ...baseProvider,
         oneMillionContextEnabled: false,
         autoCompactThreshold: 95,
@@ -1643,7 +1720,7 @@ describe('ProvidersController', () => {
 
       await controller.updateProvider('p1', { binPath: '/opt/new-claude/bin/claude' });
 
-      expect(storage.updateProvider).toHaveBeenCalledWith(
+      expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
         'p1',
         expect.objectContaining({
           binPath: '/opt/new-claude/bin/claude',
@@ -1651,6 +1728,8 @@ describe('ProvidersController', () => {
           autoCompactThreshold1m: null,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.any(Array),
       );
     });
   });
@@ -1736,6 +1815,229 @@ describe('ProvidersController', () => {
 
       await expect(controller.syncToProjects('no-such-id')).rejects.toThrow(NotFoundException);
       expect(mockSyncService.syncProviderToAllProjects).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('envScopes', () => {
+    const baseProvider = {
+      id: 'p1',
+      name: 'claude',
+      binPath: '/usr/local/bin/claude',
+      mcpConfigured: false,
+      mcpEndpoint: null,
+      mcpRegisteredAt: null,
+      oneMillionContextEnabled: false,
+      autoCompactThreshold: null,
+      env: { API_KEY: 'secret' },
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+    };
+
+    describe('GET /api/providers/:id', () => {
+      it('returns envScopes: {} when no scopes exist', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+        const result = await controller.getProvider('p1');
+
+        expect(result.envScopes).toEqual({});
+        expect(storage.listEnvScopesByProviderIds).toHaveBeenCalledWith(['p1']);
+      });
+
+      it('returns populated envScopes when scopes exist', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        const scopesMap = new Map([['p1', { API_KEY: ['proj-1', 'proj-2'] }]]);
+        storage.listEnvScopesByProviderIds.mockReturnValue(scopesMap);
+
+        const result = await controller.getProvider('p1');
+
+        expect(result.envScopes).toEqual({ API_KEY: ['proj-1', 'proj-2'] });
+      });
+    });
+
+    describe('GET /api/providers (list)', () => {
+      it('returns envScopes for each provider via a single batched read', async () => {
+        storage.listProviders.mockResolvedValue({
+          items: [
+            { ...baseProvider, id: 'p1' },
+            { ...baseProvider, id: 'p2', env: null },
+          ],
+          total: 2,
+          limit: 100,
+          offset: 0,
+        });
+        const scopesMap = new Map([['p1', { API_KEY: ['proj-1'] }]]);
+        storage.listEnvScopesByProviderIds.mockReturnValue(scopesMap);
+
+        const result = await controller.listProviders();
+
+        expect(storage.listEnvScopesByProviderIds).toHaveBeenCalledWith(['p1', 'p2']);
+        expect(storage.listEnvScopesByProviderIds).toHaveBeenCalledTimes(1);
+        expect(result.items[0].envScopes).toEqual({ API_KEY: ['proj-1'] });
+        expect(result.items[1].envScopes).toEqual({});
+      });
+    });
+
+    describe('PUT /api/providers/:id with envScopes', () => {
+      it('calls updateProviderWithScopes atomically when envScopes is present', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({ ...baseProvider });
+        storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'Project 1' });
+        storage.listEnvScopesByProviderIds.mockReturnValue(
+          new Map([['p1', { API_KEY: ['proj-1'] }]]),
+        );
+
+        await controller.updateProvider('p1', {
+          envScopes: { API_KEY: ['proj-1'] },
+        });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.any(Object),
+          { API_KEY: ['proj-1'] },
+          ['API_KEY'],
+        );
+        expect(storage.updateProvider).not.toHaveBeenCalled();
+      });
+
+      it('envScopes: {} clears all scopes', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({ ...baseProvider });
+        storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+        await controller.updateProvider('p1', { envScopes: {} });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.any(Object),
+          {},
+          ['API_KEY'],
+        );
+      });
+
+      it('routes omitted envScopes through updateProviderWithScopes (preserves scope rows for current env keys)', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({ ...baseProvider });
+        storage.listEnvScopesByProviderIds.mockReturnValue(
+          new Map([['p1', { API_KEY: ['proj-1'] }]]),
+        );
+
+        await controller.updateProvider('p1', { binPath: '/new/claude' });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.any(Object),
+          undefined,
+          ['API_KEY'],
+        );
+        expect(storage.updateProvider).not.toHaveBeenCalled();
+      });
+
+      it('routes omitted envScopes through updateProviderWithScopes (prunes scope rows for removed env key)', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({ ...baseProvider, env: null });
+        storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+        await controller.updateProvider('p1', { env: null });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.any(Object),
+          undefined,
+          [],
+        );
+        expect(storage.updateProvider).not.toHaveBeenCalled();
+      });
+
+      it('rejects unknown env key in envScopes → 400 with field hint', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+
+        await expect(
+          controller.updateProvider('p1', {
+            envScopes: { UNKNOWN_KEY: ['proj-1'] },
+          }),
+        ).rejects.toMatchObject({ details: { field: 'envScopes.UNKNOWN_KEY' } });
+
+        expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
+      });
+
+      it('rejects unknown project ID in envScopes → 400 with field hint', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.getProject.mockRejectedValue(new NotFoundError('Project', 'no-such-project'));
+
+        await expect(
+          controller.updateProvider('p1', {
+            envScopes: { API_KEY: ['no-such-project'] },
+          }),
+        ).rejects.toMatchObject({ details: { field: 'envScopes.API_KEY[0]' } });
+
+        expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
+      });
+
+      it('rejects duplicate project IDs in envScopes array → 400 with field hint', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'Project 1' });
+
+        await expect(
+          controller.updateProvider('p1', {
+            envScopes: { API_KEY: ['proj-1', 'proj-1'] },
+          }),
+        ).rejects.toMatchObject({ details: { field: 'envScopes.API_KEY[1]' } });
+
+        expect(storage.updateProviderWithScopes).not.toHaveBeenCalled();
+      });
+
+      it('accepts a project ID beyond the 100-item listProjects default page size', async () => {
+        const beyondPageId = 'proj-101';
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({ ...baseProvider });
+        storage.getProject.mockResolvedValue({ id: beyondPageId, name: 'Project 101' });
+        storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+        await controller.updateProvider('p1', {
+          envScopes: { API_KEY: [beyondPageId] },
+        });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.any(Object),
+          { API_KEY: [beyondPageId] },
+          ['API_KEY'],
+        );
+      });
+
+      it('uses post-update env keys for validation when env is also updated', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+        storage.updateProviderWithScopes.mockResolvedValue({
+          ...baseProvider,
+          env: { NEW_KEY: 'val' },
+        });
+        storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'Project 1' });
+        storage.listEnvScopesByProviderIds.mockReturnValue(new Map());
+
+        await controller.updateProvider('p1', {
+          env: { NEW_KEY: 'val' },
+          envScopes: { NEW_KEY: ['proj-1'] },
+        });
+
+        expect(storage.updateProviderWithScopes).toHaveBeenCalledWith(
+          'p1',
+          expect.objectContaining({ env: { NEW_KEY: 'val' } }),
+          { NEW_KEY: ['proj-1'] },
+          ['NEW_KEY'],
+        );
+      });
+
+      it('rejects old env key in envScopes when env is updated to remove it', async () => {
+        storage.getProvider.mockResolvedValue(baseProvider);
+
+        await expect(
+          controller.updateProvider('p1', {
+            env: { NEW_KEY: 'val' },
+            envScopes: { API_KEY: ['proj-1'] },
+          }),
+        ).rejects.toMatchObject({ details: { field: 'envScopes.API_KEY' } });
+      });
     });
   });
 

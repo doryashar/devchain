@@ -10,12 +10,38 @@ export interface DeliveryMessage {
   readonly threadId?: string;
   readonly messageId?: string;
   readonly senderAgentId?: string;
+  /**
+   * Tmux framing directive for `kind:'mcp.direct'` deliveries. Only applies to
+   * `mcp.direct`; ignored for `'mcp.thread'`, `'chat.user'`, and `'pooled'`.
+   * `'agent-banner'` (default when unset) wraps the body in the agent-oriented
+   * `[This message is sent from …]` banner; `'plain'` delivers the raw body with
+   * no wrapper — used for human (mobile) user turns where the banner is wrong.
+   */
+  readonly framing?: 'agent-banner' | 'plain';
 }
 
 export interface DeliveryPolicy {
   readonly immediate?: boolean;
   readonly submitKeys?: readonly string[];
   readonly skipConfirmation?: boolean;
+  /**
+   * Keys sent to the tmux session BEFORE the paste (e.g. `['Escape']` to dismiss
+   * an open AskUserQuestion picker so the pasted text lands as a normal user turn
+   * instead of selecting the highlighted option). Paired with `preDelayMs` to let
+   * the TUI settle before the paste. Only honored on the immediate delivery path.
+   */
+  readonly preKeys?: readonly string[];
+  /** Delay (ms) after `preKeys` and before the paste. Ignored without `preKeys`. */
+  readonly preDelayMs?: number;
+  /**
+   * When true, delivery requires an already-active session and will NOT
+   * auto-launch one. If the recipient has no active session the delivery fails
+   * (RecipientResult `status:'failed'`, `error:'SESSION_NOT_RUNNING'`) instead of
+   * launching. Defaults to false — existing callers keep the auto-launch
+   * behavior via `ensureActiveSession`. Used by mobile deliver-only sends, where
+   * launching would exceed the relay timeout and is an explicit user action.
+   */
+  readonly requireActiveSession?: boolean;
 }
 
 export interface DeliveryOutcome {

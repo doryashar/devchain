@@ -26,6 +26,8 @@ const semverString = z.string().refine((v) => isValidSemVer(v), {
  * - publishedAt: ISO timestamp of publish (set by registry)
  * - changelog: Version changelog (for registry publishing)
  * - gitCommit: Git commit hash (for traceability)
+ * - order: Optional integer; controls local create-project template ordering. Lower numbers sort
+ *   first; missing values sort last.
  */
 export const ManifestSchema = z
   .object({
@@ -41,6 +43,7 @@ export const ManifestSchema = z
     publishedAt: z.string().optional(),
     changelog: z.string().optional(),
     gitCommit: z.string().optional(),
+    order: z.number().int().optional(),
   })
   .strict();
 

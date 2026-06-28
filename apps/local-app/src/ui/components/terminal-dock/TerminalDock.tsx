@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ActiveSession,
@@ -36,6 +36,8 @@ interface TerminalDockProps {
   onOpenSession: (session: ActiveSession) => void;
   onSessionsChange: (sessions: ActiveSession[]) => void;
   onSessionTerminated: (sessionId: string) => void;
+  /** Generic accessory slot rendered at the right end of the persistent h-12 dock header row. */
+  rightSlot?: ReactNode;
 }
 
 interface SessionRowProps {
@@ -138,6 +140,7 @@ export function TerminalDock({
   onOpenSession,
   onSessionsChange,
   onSessionTerminated,
+  rightSlot,
 }: TerminalDockProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -460,6 +463,7 @@ export function TerminalDock({
             </div>
           )}
         </div>
+        {rightSlot && <div className="flex shrink-0 items-center">{rightSlot}</div>}
       </div>
 
       <span className="sr-only" aria-live="polite">

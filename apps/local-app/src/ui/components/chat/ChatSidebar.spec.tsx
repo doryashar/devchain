@@ -375,7 +375,7 @@ describe('ChatSidebar agent grouping toggle', () => {
     expect(window.localStorage.getItem(TAB_KEY)).toBe('teams');
     expect(screen.getByRole('link', { name: /Open Teams/i })).toHaveAttribute('href', '/teams');
     expect(screen.queryByText('MAIN TEAMS')).not.toBeInTheDocument();
-    expect(screen.getByText('INDEPENDENT')).toBeInTheDocument();
+    expect(screen.getByText('STANDALONE')).toBeInTheDocument();
     expect(screen.queryByText('No Team')).not.toBeInTheDocument();
   });
 
@@ -651,12 +651,12 @@ describe('ChatSidebar team lead-as-header rendering', () => {
 
     expect(screen.queryByText('TEAMS')).not.toBeInTheDocument();
     expect(screen.queryByText('1 team')).not.toBeInTheDocument();
-    expect(screen.getByText('INDEPENDENT')).toBeInTheDocument();
+    expect(screen.getByText('STANDALONE')).toBeInTheDocument();
     expect(screen.getByText('1 agent')).toBeInTheDocument();
     expect(screen.getByText('GUESTS')).toBeInTheDocument();
     expect(screen.getByText('1 guest')).toBeInTheDocument();
     expect(screen.queryByText('No Team')).not.toBeInTheDocument();
-    expect(screen.getByText('INDEPENDENT').closest('button')).toBeNull();
+    expect(screen.getByText('STANDALONE').closest('button')).toBeNull();
     expect(screen.getByText('GUESTS').closest('button')).toBeNull();
     expect(screen.getByRole('button', { name: /^MAIN$/i })).toHaveAttribute(
       'aria-expanded',

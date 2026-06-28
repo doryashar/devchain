@@ -20,7 +20,7 @@ export class QrInitiateProxyController {
 
   private async callUpstream(token: string | null, body: unknown): Promise<unknown> {
     if (!token) throw new UnauthorizedException('No access token');
-    const baseUrl = process.env.IDENTITY_SERVICE_URL ?? 'http://localhost:3002';
+    const baseUrl = process.env.IDENTITY_SERVICE_URL ?? 'https://auth.devchain.cc';
     const res = await fetch(`${baseUrl}/auth/qr/initiate`, {
       method: 'POST',
       headers: {

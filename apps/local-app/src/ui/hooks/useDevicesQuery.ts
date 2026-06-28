@@ -24,7 +24,10 @@ export type DevicesQueryState =
 export function useDevicesQuery(): DevicesQueryState {
   const { status: cloudStatus } = useCloudConnection();
   const query = useQuery({
-    queryKey: ['cloud', 'devices'],
+    // Scope the cache by current userId so an account switch never reuses the
+    // previous account's device list (which would wrongly hide the download CTA
+    // for a new account that has zero devices).
+    queryKey: ['cloud', 'devices', cloudStatus.userId ?? null],
     queryFn: async (): Promise<{ devices: Device[] } | null> => {
       const res = await fetch('/api/cloud/devices');
       if (res.status === 404 || res.status === 501) return null;

@@ -156,19 +156,9 @@ export class SessionsController {
       throw new BadRequestException(parsed.error.errors.map((e) => e.message).join(', '));
     }
 
-    const session = this.sessionsService.getSession(id);
-    if (!session) {
-      throw new NotFoundException(`Session ${id} not found`);
-    }
-
-    if (!session.agentId) {
-      throw new ForbiddenException('PROJECT_MISMATCH');
-    }
-
-    const agent = await this.storage.getAgent(session.agentId);
-    if (agent.projectId !== parsed.data.projectId) {
-      throw new ForbiddenException('PROJECT_MISMATCH');
-    }
+    // Shared ownership guard (NotFound / Forbidden) — same helper the cloud-tunnel
+    // chat.renameSession RPC uses, so the two transports cannot drift.
+    await this.sessionsService.validateSessionInProject(id, parsed.data.projectId);
 
     return this.sessionsService.updateName(id, parsed.data.name);
   }
@@ -189,19 +179,9 @@ export class SessionsController {
       throw new BadRequestException(query.error.errors.map((e) => e.message).join(', '));
     }
 
-    const session = this.sessionsService.getSession(id);
-    if (!session) {
-      throw new NotFoundException(`Session ${id} not found`);
-    }
-
-    if (!session.agentId) {
-      throw new ForbiddenException('PROJECT_MISMATCH');
-    }
-
-    const agent = await this.storage.getAgent(session.agentId);
-    if (agent.projectId !== query.data.projectId) {
-      throw new ForbiddenException('PROJECT_MISMATCH');
-    }
+    // Shared ownership guard (NotFound / Forbidden) — same helper the cloud-tunnel
+    // chat.deleteSessionRecord RPC uses. Running-status check layered on top.
+    const session = await this.sessionsService.validateSessionInProject(id, query.data.projectId);
 
     if (session.status === 'running') {
       throw new ConflictException('STATUS_RUNNING');

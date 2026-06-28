@@ -1,10 +1,8 @@
 import { useCallback, useRef } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
-import type { Socket } from 'socket.io-client';
 import { termLog } from '@/ui/lib/debug';
 import { DEFAULT_TERMINAL_SCROLLBACK } from '@/common/constants/terminal';
-import { resolveTerminalSocket } from '../socket';
 
 interface TerminalSeedPayload {
   data: string;
@@ -27,6 +25,28 @@ interface SeedState {
   cursorX?: number;
   cursorY?: number;
   hasHistory?: boolean; // Indicates if more history is available in tmux scrollback
+}
+
+function buildCursorPositionSequence(
+  cursorX: number | undefined,
+  cursorY: number | undefined,
+  cols: number,
+  rows: number,
+): string | null {
+  if (
+    cursorX === undefined ||
+    cursorY === undefined ||
+    !Number.isFinite(cursorX) ||
+    !Number.isFinite(cursorY)
+  ) {
+    return null;
+  }
+
+  const maxCol = Math.max(0, cols - 1);
+  const maxRow = Math.max(0, rows - 1);
+  const col = Math.min(Math.max(Math.floor(cursorX), 0), maxCol) + 1;
+  const row = Math.min(Math.max(Math.floor(cursorY), 0), maxRow) + 1;
+  return `\x1b[${row};${col}H`;
 }
 
 /**
@@ -62,7 +82,6 @@ export function useSeedManager(
   hasHistoryRef: React.MutableRefObject<boolean>,
   onSeedReady?: () => void,
   scrollbackLines: number = DEFAULT_TERMINAL_SCROLLBACK,
-  socket?: Socket | null,
 ) {
   const seedStateRef = useRef<SeedState | null>(null);
   const seedTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -170,6 +189,9 @@ export function useSeedManager(
         if (expectingSeedRef.current) {
           expectingSeedRef.current = false;
         }
+        // A fresh seed is a mount-time replay phase, not browsable history yet.
+        // Re-enable history only after xterm has applied the async replay below.
+        hasHistoryRef.current = false;
 
         seedStateRef.current = {
           totalChunks,
@@ -278,13 +300,67 @@ export function useSeedManager(
             fitAddonRef.current?.fit();
             const cols = xtermRef.current.cols;
             const rows = xtermRef.current.rows;
+            const cursorPositionSequence = buildCursorPositionSequence(
+              state.cursorX,
+              state.cursorY,
+              cols,
+              rows,
+            );
+
+            let finishedSeedWrite = false;
+            const finishSeedWrite = () => {
+              if (finishedSeedWrite) {
+                return;
+              }
+              finishedSeedWrite = true;
+
+              // xterm.write is asynchronous and can emit internal scroll events while
+              // replaying the seed. Keep history disabled until replay is fully settled
+              // so mount-time buffer movement is not mistaken for a user scroll-up.
+              // HONOR the server's hasHistory flag (was unconditionally true): the server
+              // advertises false when no loadable history exists beyond the seed — e.g.
+              // alt-screen TUI seeds, whose single captured screen has no primary-buffer
+              // scrollback. Cross-provider: a non-truncated seed now correctly offers no
+              // scroll-up affordance instead of a dead one.
+              hasHistoryRef.current = state.hasHistory === true;
+              termLog('seed_hasHistory_resolved', {
+                sessionId,
+                hasHistory: hasHistoryRef.current,
+                reason: 'seed_write_settled',
+              });
+
+              // Signal ready after a short delay so the xterm write/render settles.
+              setTimeout(() => {
+                onSeedReady?.();
+                termLog('seed_ready', { sessionId });
+              }, 400);
+
+              seedStateRef.current = null;
+              pendingWritesRef.current.length = 0;
+              dispatchConn({ type: 'SEED_COMPLETE' });
+            };
 
             // Write the captured tmux scrollback so the viewport has visible content
-            // immediately. The resize jiggle below still fires for cursor positioning
-            // and to give the TUI a chance to redraw, but no longer the only source
-            // of visible content.
+            // immediately. Do not force a resize jiggle here: subscribe already sized
+            // the PTY, and repeated mount-time SIGWINCH can mutate full-screen TUIs.
             if (fullSeed) {
-              xtermRef.current.write(fullSeed);
+              if (cursorPositionSequence) {
+                xtermRef.current.write(fullSeed, () => {
+                  xtermRef.current?.scrollToBottom();
+                  xtermRef.current?.write(cursorPositionSequence, finishSeedWrite);
+                });
+              } else {
+                xtermRef.current.write(fullSeed, () => {
+                  xtermRef.current?.scrollToBottom();
+                  finishSeedWrite();
+                });
+              }
+            } else if (cursorPositionSequence) {
+              xtermRef.current.scrollToBottom();
+              xtermRef.current.write(cursorPositionSequence, finishSeedWrite);
+            } else {
+              xtermRef.current.scrollToBottom();
+              finishSeedWrite();
             }
 
             termLog('seed_written', {
@@ -295,39 +371,6 @@ export function useSeedManager(
               seedCols: state.cols,
               seedRows: state.rows,
             });
-
-            // Force TUI redraw via SIGWINCH (resize jiggle)
-            // Use current terminal dimensions, not seed dimensions
-            const activeSocket = resolveTerminalSocket(socket);
-            if (activeSocket.connected) {
-              activeSocket.emit('terminal:resize', { sessionId, cols, rows: rows - 1 });
-              setTimeout(() => {
-                activeSocket.emit('terminal:resize', { sessionId, cols, rows });
-                termLog('seed_trigger_resize', { sessionId, cols, rows });
-              }, 50);
-            }
-
-            // Signal ready after delay for TUI to redraw
-            // TUI redraw starts at ~50ms (after second resize), needs time for network + rendering
-            setTimeout(() => {
-              onSeedReady?.();
-              termLog('seed_ready', { sessionId });
-            }, 400);
-
-            // Option A: ALWAYS enable history loading
-            // Since we skip seed content and rely on TUI redraw for viewport,
-            // we MUST allow users to scroll up to load clean history from tmux.
-            // The seed's hasHistory flag indicates truncation, but with Option A
-            // we always need tmux history because the seed was never written.
-            hasHistoryRef.current = true;
-            termLog('seed_hasHistory_enabled', {
-              sessionId,
-              reason: 'option_a_no_seed_content',
-            });
-
-            seedStateRef.current = null;
-            pendingWritesRef.current.length = 0;
-            dispatchConn({ type: 'SEED_COMPLETE' });
           }
         }
       }
@@ -342,7 +385,6 @@ export function useSeedManager(
       hasHistoryRef,
       onSeedReady,
       scrollbackLines,
-      socket,
     ],
   );
 

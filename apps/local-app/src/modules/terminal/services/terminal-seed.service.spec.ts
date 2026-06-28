@@ -244,6 +244,26 @@ describe('TerminalSeedService', () => {
       expect(mockClient.emit).toHaveBeenCalled();
     });
 
+    it('preserves real trailing blank rows while removing the capture separator', async () => {
+      terminalIO.captureHistory = jest.fn().mockResolvedValue({
+        ok: true,
+        output: 'line 1\r\nline 2\r\n\r\n',
+      });
+
+      await seedService.emitSeedToClient({
+        client: mockClient as Socket,
+        sessionId: 'session-123',
+        maxBytes: 1024 * 1024,
+      });
+
+      const seedCall = (mockClient.emit as jest.Mock).mock.calls.find(
+        ([event]) => event === 'message',
+      );
+      expect((seedCall![1] as { payload: { data: string } }).payload.data).toBe(
+        'line 1\r\nline 2\r\n',
+      );
+    });
+
     it('should handle empty snapshot gracefully', async () => {
       terminalIO.captureHistory = jest.fn().mockResolvedValue({ ok: true, output: '' });
 

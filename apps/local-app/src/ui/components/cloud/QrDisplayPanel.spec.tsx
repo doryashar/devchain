@@ -180,6 +180,27 @@ describe('QrDisplayPanel', () => {
       expect(html).not.toContain('refreshToken');
       expect(html).not.toContain('token');
     });
+
+    it('renders the safety number to compare when provided', () => {
+      render(
+        <QrDisplayPanel
+          {...defaultProps}
+          status="success"
+          qrPayload={null}
+          safetyNumber="12345 67890 11111 22222 33333 44444 55555 66666"
+        />,
+      );
+      expect(screen.getByTestId('qr-safety-number')).toBeInTheDocument();
+      expect(
+        screen.getByText('12345 67890 11111 22222 33333 44444 55555 66666'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('should match the number on your phone')).toBeInTheDocument();
+    });
+
+    it('omits the safety-number block when none is available', () => {
+      render(<QrDisplayPanel {...defaultProps} status="success" qrPayload={null} />);
+      expect(screen.queryByTestId('qr-safety-number')).not.toBeInTheDocument();
+    });
   });
 
   describe('finalizing state', () => {

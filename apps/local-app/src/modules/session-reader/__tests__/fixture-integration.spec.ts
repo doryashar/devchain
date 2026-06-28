@@ -82,9 +82,27 @@ describe('Fixture-based integration tests', () => {
   describe('session-with-tools.jsonl', () => {
     const filePath = path.join(FIXTURES_DIR, 'session-with-tools.jsonl');
 
-    it('should parse all 8 messages', async () => {
+    it('should parse 4 messages (tool_results folded + continuation assistants coalesced)', async () => {
+      // 8 JSONL entries → 4 messages: u-102 + u-104 (tool_result-only) fold onto a-101/a-103,
+      // AND the continuation assistants a-102 / a-104 coalesce onto a-101 / a-103 (each tool
+      // turn counts as ONE assistant message). u-103 is a real prompt, so it starts a new turn.
       const result = await parseClaudeJsonl(filePath);
-      expect(result.messages).toHaveLength(8);
+      expect(result.messages).toHaveLength(4);
+      expect(result.metrics.messageCount).toBe(4);
+      expect(result.messages.map((m) => m.role)).toEqual([
+        'user', // u-101
+        'assistant', // a-101 (+ folded tool_result u-102 + coalesced continuation a-102)
+        'user', // u-103
+        'assistant', // a-103 (+ folded tool_result u-104 + coalesced continuation a-104)
+      ]);
+      // No standalone user-role tool-result message remains.
+      expect(result.messages.some((m) => m.role === 'user' && m.toolResults.length > 0)).toBe(
+        false,
+      );
+      // The continuation text is preserved on the coalesced assistant.
+      const firstAsst = result.messages[1];
+      const texts = firstAsst.content.filter((b) => b.type === 'text').map((b) => b.text);
+      expect(texts).toContain('The file contains a simple hello world program.');
     });
 
     it('should extract tool calls from assistant messages', async () => {
@@ -98,11 +116,12 @@ describe('Fixture-based integration tests', () => {
       expect(readMsg.toolCalls[0].isTask).toBe(false);
     });
 
-    it('should extract tool results from user messages', async () => {
+    it('should fold tool results onto the preceding assistant message', async () => {
       const result = await parseClaudeJsonl(filePath);
 
-      // u-102 has a tool_result
-      const resultMsg = result.messages[2];
+      // u-102's tool_result is folded onto a-101 (now messages[1]).
+      const resultMsg = result.messages[1];
+      expect(resultMsg.role).toBe('assistant');
       expect(resultMsg.toolResults).toHaveLength(1);
       expect(resultMsg.toolResults[0].toolCallId).toBe('tool-001');
       expect(resultMsg.toolResults[0].content).toBe("console.log('hello world');");
@@ -111,8 +130,8 @@ describe('Fixture-based integration tests', () => {
     it('should identify Task tool calls with subagent metadata', async () => {
       const result = await parseClaudeJsonl(filePath);
 
-      // a-103 has a Task tool call
-      const taskMsg = result.messages[5];
+      // a-103 has a Task tool call — now messages[3] after folding + continuation coalesce.
+      const taskMsg = result.messages[3];
       expect(taskMsg.toolCalls).toHaveLength(1);
       expect(taskMsg.toolCalls[0].name).toBe('Task');
       expect(taskMsg.toolCalls[0].isTask).toBe(true);
@@ -143,10 +162,12 @@ describe('Fixture-based integration tests', () => {
       expect(toolCallBlock).toBeDefined();
     });
 
-    it('should include tool_result content blocks in user content', async () => {
+    it('should include the folded tool_result content block on the assistant message', async () => {
       const result = await parseClaudeJsonl(filePath);
 
-      const resultMsg = result.messages[2]; // u-102
+      // u-102's tool_result block is folded onto a-101 (messages[1]) alongside its tool_call.
+      const resultMsg = result.messages[1];
+      expect(resultMsg.role).toBe('assistant');
       const toolResultBlock = resultMsg.content.find((b) => b.type === 'tool_result');
       expect(toolResultBlock).toBeDefined();
     });

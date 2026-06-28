@@ -5,7 +5,6 @@ import {
   WORKTREE_PROXY_UNAVAILABLE_EVENT,
   type WorktreeProxyUnavailableDetail,
 } from '@/ui/lib/worktree-fetch-interceptor';
-import type { WorktreeTabContextValue } from './useWorktreeTab';
 
 function isApiPath(pathname: string): boolean {
   return pathname === '/api' || pathname.startsWith('/api/');

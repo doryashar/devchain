@@ -100,6 +100,25 @@ export const providerModels = sqliteTable(
   }),
 );
 
+// Provider Env Scopes (per-project scoping for provider-level env vars)
+export const providerEnvScopes = sqliteTable(
+  'provider_env_scopes',
+  {
+    providerId: text('provider_id')
+      .notNull()
+      .references(() => providers.id, { onDelete: 'cascade' }),
+    envKey: text('env_key').notNull(),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.providerId, table.envKey, table.projectId] }),
+    projectIdIdx: index('provider_env_scopes_project_id_idx').on(table.projectId),
+  }),
+);
+
 // Agent Profiles
 // Note: providerId and options columns removed in migration 0031
 // Provider configuration now lives in profile_provider_configs table

@@ -116,7 +116,7 @@ export class SessionLaunchPipeline {
           profileOptions: options,
           modelOverride: agent.modelOverride,
           providerBinPath: provider.binPath!,
-          providerEnv: provider.env,
+          providerEnv: this.storage.getProviderEnvForProject(provider.id, projectId),
           configEnv,
           provider,
           hookContext: isHookCapable(adapter)
@@ -165,7 +165,10 @@ export class SessionLaunchPipeline {
           }
         });
 
-        await this.terminalIO.disableAlternateScreen({ name: tmuxSessionName });
+        await this.terminalIO.setAlternateScreen(
+          { name: tmuxSessionName },
+          adapter.terminalOutputBehavior?.usesAlternateScreen ?? false,
+        );
         this.terminalIO.startHealthCheck(tmuxSessionName, sessionId);
 
         // Phase 9: flipToRunning (already running from createSession insert)

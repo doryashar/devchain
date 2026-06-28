@@ -820,6 +820,59 @@ describe('ExportSchema', () => {
     });
   });
 
+  describe('_manifest.order', () => {
+    const baseTemplate = {
+      version: 1,
+      prompts: [],
+      profiles: [],
+      agents: [],
+      statuses: [],
+    };
+
+    it('accepts _manifest with numeric order', () => {
+      const result = ExportSchema.safeParse({
+        ...baseTemplate,
+        _manifest: { name: 'x', order: 10 },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data._manifest?.order).toBe(10);
+      }
+    });
+
+    it('accepts _manifest without order (backward compatible)', () => {
+      const result = ExportSchema.safeParse({
+        ...baseTemplate,
+        _manifest: { name: 'x' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects _manifest with string order', () => {
+      const result = ExportSchema.safeParse({
+        ...baseTemplate,
+        _manifest: { name: 'x', order: '10' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects _manifest with non-integer order (float)', () => {
+      const result = ExportSchema.safeParse({
+        ...baseTemplate,
+        _manifest: { name: 'x', order: 1.5 },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects _manifest with unknown fields (strict mode preserved)', () => {
+      const result = ExportSchema.safeParse({
+        ...baseTemplate,
+        _manifest: { name: 'x', foobar: 1 },
+      });
+      expect(result.success).toBe(false);
+    });
+  });
+
   describe('EnvVarsSchema (standalone)', () => {
     it('should accept valid env vars', () => {
       const result = EnvVarsSchema.safeParse({ MY_VAR: 'value', PATH: '/usr/bin' });

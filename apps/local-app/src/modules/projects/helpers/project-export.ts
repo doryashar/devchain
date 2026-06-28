@@ -85,7 +85,8 @@ export async function exportProjectWithHelper(
   const projectSettings = buildProjectSettings(state, projectId);
   const watchers = await buildExportWatchers(state, deps.storage);
   const subscribers = buildExportSubscribers(state.subscribersRes);
-  const providerSettings = buildProviderSettings(profileContext.providersMap);
+  const scopeMap = deps.storage.listEnvScopesByProviderIds([...profileContext.providersMap.keys()]);
+  const providerSettings = buildProviderSettings(profileContext.providersMap, projectId, scopeMap);
   const providerModels = await buildProviderModels(profileContext.providersMap, deps.storage);
   const teams = deps.teamsService ? await buildExportTeams(state.project, deps) : [];
   const scheduledEpics = await buildExportScheduledEpics(projectId, state, deps.storage);
@@ -419,8 +420,25 @@ function buildExportSubscribers(subscribersRes: ExportState['subscribersRes']) {
   }));
 }
 
+function filterEnvByScope(
+  env: Record<string, string>,
+  scopes: Record<string, string[]> | undefined,
+  sourceProjectId: string,
+): Record<string, string> | null {
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    const keyScopes = scopes?.[key];
+    if (!keyScopes || keyScopes.length === 0 || keyScopes.includes(sourceProjectId)) {
+      filtered[key] = value;
+    }
+  }
+  return Object.keys(filtered).length > 0 ? filtered : null;
+}
+
 function buildProviderSettings(
   providersMap: Map<string, Awaited<ReturnType<StorageService['listProvidersByIds']>>[number]>,
+  sourceProjectId: string,
+  scopeMap: Map<string, Record<string, string[]>>,
 ) {
   const providerSettings: Array<{
     name: string;
@@ -430,8 +448,12 @@ function buildProviderSettings(
     env?: Record<string, string> | null;
   }> = [];
 
-  for (const provider of providersMap.values()) {
-    const hasEnv = provider.env && Object.keys(provider.env).length > 0;
+  for (const [providerId, provider] of providersMap.entries()) {
+    const filteredEnv =
+      provider.env && Object.keys(provider.env).length > 0
+        ? filterEnvByScope(provider.env, scopeMap.get(providerId), sourceProjectId)
+        : null;
+    const hasEnv = filteredEnv !== null;
     if (
       provider.autoCompactThreshold != null ||
       provider.autoCompactThreshold1m != null ||
@@ -445,7 +467,7 @@ function buildProviderSettings(
           autoCompactThreshold1m: provider.autoCompactThreshold1m,
         }),
         ...(provider.oneMillionContextEnabled && { oneMillionContextEnabled: true }),
-        ...(hasEnv && { env: sanitizeEnvMap(provider.env) }),
+        ...(hasEnv && { env: sanitizeEnvMap(filteredEnv) }),
       });
     }
   }

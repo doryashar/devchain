@@ -790,6 +790,15 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
     await this.db.delete(epicComments).where(eq(epicComments.id, id));
   }
 
+  async deleteEpicCommentScoped(epicId: string, commentId: string): Promise<boolean> {
+    const { epicComments } = await import('../../db/schema');
+    const { eq, and } = await import('drizzle-orm');
+    const result = await this.db
+      .delete(epicComments)
+      .where(and(eq(epicComments.id, commentId), eq(epicComments.epicId, epicId)));
+    return (result.changes ?? 0) > 0;
+  }
+
   async getEpicsByIdPrefix(
     projectId: string,
     prefix: string,

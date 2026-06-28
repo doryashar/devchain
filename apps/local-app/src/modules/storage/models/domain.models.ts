@@ -331,6 +331,12 @@ export type CreateEpicComment = Omit<EpicComment, 'id' | 'createdAt' | 'updatedA
 export type UpdateEpicComment = Partial<Omit<EpicComment, 'id' | 'createdAt' | 'updatedAt'>>;
 
 // ============================================
+// PROVIDER ENV SCOPES
+// ============================================
+
+export type EnvScopesMap = Record<string, string[]>;
+
+// ============================================
 // GUESTS - External agents registered via MCP
 // ============================================
 

@@ -109,14 +109,18 @@ describe('type-guards', () => {
   });
 
   describe('isTranscriptDiscoveryCapable', () => {
-    it('returns true for Claude, Codex, and Gemini', () => {
+    it('returns true for Claude, Codex, Gemini, and OpenCode', () => {
       expect(isTranscriptDiscoveryCapable(claude)).toBe(true);
       expect(isTranscriptDiscoveryCapable(codex)).toBe(true);
       expect(isTranscriptDiscoveryCapable(gemini)).toBe(true);
+      expect(isTranscriptDiscoveryCapable(opencode)).toBe(true);
     });
 
-    it('returns false for OpenCode', () => {
-      expect(isTranscriptDiscoveryCapable(opencode)).toBe(false);
+    it('marks OpenCode as DB-backed: requires providerSessionId for restore', () => {
+      if (isTranscriptDiscoveryCapable(opencode)) {
+        expect(opencode.transcriptDiscoveryStrategy).toBe('all');
+        expect(opencode.providerSessionIdRequiredForRestore).toBe(true);
+      }
     });
 
     it('narrows type with correct strategy per provider', () => {

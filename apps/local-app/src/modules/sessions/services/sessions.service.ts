@@ -6,7 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { stat } from 'fs/promises';
-import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import { TerminalIOService } from '../../terminal/services/terminal-io/terminal-io.service';
 import { createLogger } from '../../../common/logging/logger';
 import { PtyService } from '../../terminal/services/pty.service';
@@ -32,6 +32,7 @@ interface SessionRow {
   epic_id: string | null;
   agent_id: string | null;
   tmux_session_id: string | null;
+  provider_session_id: string | null;
   status: 'running' | 'stopped' | 'failed';
   started_at: string;
   ended_at: string | null;
@@ -326,6 +327,24 @@ export class SessionsService {
     }
   }
 
+  /**
+   * Whether this session's provider runs as a full-screen TUI on the terminal
+   * alternate screen. Resolves session → provider → adapter and reads the
+   * adapter's `terminalOutputBehavior.usesAlternateScreen` flag. Defaults to
+   * `false` for unknown providers or sessions whose lookup fails — safe because
+   * suppressing alt-screen (preserving scrollback) is the broader default.
+   */
+  usesAlternateScreenFor(sessionId: string): boolean {
+    const meta = this.lookupRunningSessionMeta(sessionId);
+    if (!meta) return false;
+    try {
+      const adapter = this.providerAdapterFactory.getAdapter(meta.providerName);
+      return adapter.terminalOutputBehavior?.usesAlternateScreen ?? false;
+    } catch {
+      return false;
+    }
+  }
+
   listRunningSessionMetas(): Array<{
     sessionId: string;
     tmuxSessionName: string;
@@ -352,13 +371,52 @@ export class SessionsService {
   }
 
   /**
+   * Running sessions that already have a persisted transcript path — the inputs
+   * needed to re-attach a transcript watcher after a local-app restart.
+   *
+   * The transcript watcher only otherwise starts on `session.started` (i.e. when a
+   * session is launched), so without rehydration, sessions that were already
+   * running before boot lose live `session.transcript.updated` events until they
+   * are reopened. See {@link TranscriptWatcherRehydrator}.
+   */
+  listRunningTranscriptSessions(): Array<{
+    sessionId: string;
+    transcriptPath: string;
+    providerName: string;
+    providerSessionId: string | null;
+  }> {
+    const rows = this.sqlite
+      .prepare(
+        `SELECT id, transcript_path, provider_name_at_launch, provider_session_id
+         FROM sessions
+         WHERE status = 'running'
+           AND transcript_path IS NOT NULL
+           AND provider_name_at_launch IS NOT NULL`,
+      )
+      .all() as Array<{
+      id: string;
+      transcript_path: string | null;
+      provider_name_at_launch: string | null;
+      provider_session_id: string | null;
+    }>;
+    return rows
+      .filter((r) => r.transcript_path && r.provider_name_at_launch)
+      .map((r) => ({
+        sessionId: r.id,
+        transcriptPath: r.transcript_path!,
+        providerName: r.provider_name_at_launch!,
+        providerSessionId: r.provider_session_id ?? null,
+      }));
+  }
+
+  /**
    * Get session by ID
    */
   getSession(sessionId: string): SessionDto | null {
     const row = this.sqlite
       .prepare(
         `
-      SELECT id, epic_id, agent_id, tmux_session_id, status, started_at, ended_at, last_activity_at, activity_state, busy_since, transcript_path, name, created_at, updated_at
+      SELECT id, epic_id, agent_id, tmux_session_id, provider_session_id, status, started_at, ended_at, last_activity_at, activity_state, busy_since, transcript_path, name, created_at, updated_at
       FROM sessions
       WHERE id = ?
     `,
@@ -375,6 +433,7 @@ export class SessionsService {
       epicId: row.epic_id,
       agentId: row.agent_id,
       tmuxSessionId: row.tmux_session_id,
+      providerSessionId: row.provider_session_id ?? null,
       status: row.status,
       startedAt: row.started_at,
       endedAt: row.ended_at,
@@ -652,6 +711,44 @@ export class SessionsService {
           )
           .get(agentId) as { title: string } | undefined);
     return row?.title ?? null;
+  }
+
+  /**
+   * Shared ownership guard for session-id-centric mutations (rename / delete
+   * record) over BOTH the REST controllers and the mobile cloud-tunnel RPCs.
+   * Centralizing it here prevents the two transports' guards from drifting.
+   *
+   * Chain (mirrors the original REST controller logic):
+   *   (1) session exists                  → NotFoundError ('not_found', 404)
+   *   (2) session.agentId present         → ForbiddenError ('forbidden', 403)
+   *   (3) agent.projectId === projectId   → ForbiddenError ('forbidden', 403)
+   *
+   * Throws domain `AppError`s (not NestJS HTTP exceptions) so the tunnel's
+   * `toJsonRpcError` preserves the domain code under `error.data.code`; the REST
+   * layer's global `AllExceptionsFilter` maps the same errors to 404/403.
+   * Returns the loaded session so callers can layer extra checks (e.g. delete's
+   * running-status guard).
+   */
+  async validateSessionInProject(sessionId: string, projectId: string): Promise<SessionDto> {
+    const session = this.getSession(sessionId);
+    if (!session) {
+      throw new NotFoundError('Session', sessionId);
+    }
+    if (!session.agentId) {
+      throw new ForbiddenError('PROJECT_MISMATCH', {
+        code: 'SESSION_PROJECT_MISMATCH',
+        sessionId,
+      });
+    }
+    const agent = await this.storage.getAgent(session.agentId);
+    if (agent.projectId !== projectId) {
+      throw new ForbiddenError('PROJECT_MISMATCH', {
+        code: 'SESSION_PROJECT_MISMATCH',
+        sessionId,
+        projectId,
+      });
+    }
+    return session;
   }
 
   updateName(sessionId: string, name: string | null): SessionDto {

@@ -128,7 +128,7 @@ export function useAgentSessionControls({
   }, [projectId]);
 
   // ---- Presence query ----
-  const { data: agentPresence = {} as AgentPresenceMap, refetch: refetchPresence } = useQuery({
+  const { data: agentPresence = {} as AgentPresenceMap } = useQuery({
     queryKey: ['agent-presence', projectId],
     queryFn: () => fetchAgentPresence(projectId as string, apiFetch),
     enabled: !!projectId,

@@ -3,8 +3,8 @@ import { access, stat } from 'fs/promises';
 import { constants } from 'fs';
 import { isAbsolute, resolve } from 'path';
 import { StorageService, STORAGE_SERVICE } from '../../storage/interfaces/storage.interface';
-import { Provider, UpdateProvider } from '../../storage/models/domain.models';
-import { ValidationError } from '../../../common/errors/error-types';
+import { EnvScopesMap, Provider, UpdateProvider } from '../../storage/models/domain.models';
+import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import { ProbeProofService } from './probe-proof.service';
 import { ProviderProjectSyncService, type SyncResult } from './provider-project-sync.service';
 import { probe1mSupport, ProbeOutcome } from '../utils/probe-1m';
@@ -39,6 +39,7 @@ export type UpdateProviderRequest = {
   autoCompactThreshold1m?: number | null;
   oneMillionContextEnabled?: boolean;
   env?: Record<string, string> | null;
+  envScopes?: EnvScopesMap;
 };
 
 const THRESHOLD_1M_DEFAULT = 50;
@@ -139,7 +140,59 @@ export class ProviderStateManager {
       payload.oneMillionContextEnabled = partial.oneMillionContextEnabled;
     }
 
-    const provider = await this.storage.updateProvider(providerId, payload);
+    const { envScopes } = partial;
+
+    const postUpdateEnv = payload.env !== undefined ? (payload.env ?? {}) : (existing.env ?? {});
+    const postUpdateEnvKeys = Object.keys(postUpdateEnv);
+
+    if (envScopes !== undefined) {
+      for (const key of Object.keys(envScopes)) {
+        if (!postUpdateEnvKeys.includes(key)) {
+          throw new ValidationError('Unknown env key', { field: `envScopes.${key}` });
+        }
+      }
+
+      const referencedProjectIds = new Set<string>();
+      for (const projectIds of Object.values(envScopes)) {
+        for (const pid of projectIds) referencedProjectIds.add(pid);
+      }
+      const existenceEntries = await Promise.all(
+        Array.from(referencedProjectIds).map(async (pid) => {
+          try {
+            await this.storage.getProject(pid);
+            return [pid, true] as const;
+          } catch (err) {
+            if (err instanceof NotFoundError) return [pid, false] as const;
+            throw err;
+          }
+        }),
+      );
+      const validProjectIds = new Set(
+        existenceEntries.filter(([, exists]) => exists).map(([pid]) => pid),
+      );
+      for (const [envKey, projectIds] of Object.entries(envScopes)) {
+        const seen = new Set<string>();
+        for (let i = 0; i < projectIds.length; i++) {
+          const pid = projectIds[i];
+          if (seen.has(pid)) {
+            throw new ValidationError('Duplicate project ID', {
+              field: `envScopes.${envKey}[${i}]`,
+            });
+          }
+          seen.add(pid);
+          if (!validProjectIds.has(pid)) {
+            throw new ValidationError('Unknown project', { field: `envScopes.${envKey}[${i}]` });
+          }
+        }
+      }
+    }
+
+    const provider = await this.storage.updateProviderWithScopes(
+      providerId,
+      payload,
+      envScopes,
+      postUpdateEnvKeys,
+    );
     return { provider };
   }
 

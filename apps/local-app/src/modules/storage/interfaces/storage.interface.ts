@@ -22,6 +22,7 @@ import {
   UpdateProvider,
   ProviderMcpMetadata,
   UpdateProviderMcpMetadata,
+  EnvScopesMap,
   AgentProfile,
   CreateAgentProfile,
   UpdateAgentProfile,
@@ -350,6 +351,12 @@ export interface EpicStorage {
   listEpicComments(epicId: string, options?: ListOptions): Promise<ListResult<EpicComment>>;
   createEpicComment(data: CreateEpicComment): Promise<EpicComment>;
   deleteEpicComment(id: string): Promise<void>;
+  /**
+   * Delete a comment scoped to its owning epic (`WHERE id = ? AND epic_id = ?`).
+   * Returns true when a row was deleted, false when none matched (comment from a
+   * different epic, or already gone) so callers can surface a clean not-found.
+   */
+  deleteEpicCommentScoped(epicId: string, commentId: string): Promise<boolean>;
   getEpicsByIdPrefix(
     projectId: string,
     prefix: string,
@@ -388,6 +395,14 @@ export interface ProviderStorage {
   listProvidersByIds(ids: string[]): Promise<Provider[]>;
   updateProvider(id: string, data: UpdateProvider): Promise<Provider>;
   deleteProvider(id: string): Promise<void>;
+  getProviderEnvForProject(providerId: string, projectId: string): Record<string, string> | null;
+  listEnvScopesByProviderIds(providerIds: string[]): Map<string, EnvScopesMap>;
+  updateProviderWithScopes(
+    id: string,
+    data: UpdateProvider,
+    envScopes: EnvScopesMap | undefined,
+    currentEnvKeys: string[],
+  ): Promise<Provider>;
   getProviderMcpMetadata(id: string): Promise<ProviderMcpMetadata>;
   updateProviderMcpMetadata(id: string, metadata: UpdateProviderMcpMetadata): Promise<Provider>;
 }
@@ -610,6 +625,14 @@ export interface ConnectorStorage {
   deleteFieldMapping(id: string): Promise<void>;
 }
 
+export interface SessionStorage {
+  parkSessionsFromAgents(agentIds: string[]): Promise<Map<string, string[]>>;
+  applySessionPlan(
+    toReassign: Array<{ sessionId: string; newAgentId: string }>,
+    toDelete: string[],
+  ): Promise<void>;
+}
+
 export interface StorageService
   extends ProjectStorage,
     StatusStorage,
@@ -629,6 +652,7 @@ export interface StorageService
     ReviewStorage,
     ScheduledEpicStorage,
     ConnectorStorage,
+    SessionStorage,
     EpicAssignmentRuleStorage {}
 
 export interface EpicAssignmentRuleStorage {

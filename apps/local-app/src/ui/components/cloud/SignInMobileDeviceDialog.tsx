@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button } from '../ui/button';
+import { cn } from '@/ui/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -13,15 +14,28 @@ import { QrDisplayPanel } from './QrDisplayPanel';
 
 interface SignInMobileDeviceDialogProps {
   identityServiceUrl: string;
+  /** Additional class names appended to the trigger button (merged via cn). */
+  triggerClassName?: string;
+  /** Size variant for the trigger button. Defaults to 'sm' (existing behaviour). */
+  triggerSize?: 'sm' | 'default' | 'lg';
 }
 
-export function SignInMobileDeviceDialog({ identityServiceUrl }: SignInMobileDeviceDialogProps) {
+export function SignInMobileDeviceDialog({
+  identityServiceUrl,
+  triggerClassName,
+  triggerSize = 'sm',
+}: SignInMobileDeviceDialogProps) {
   const [open, setOpen] = useState(false);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" data-testid="sign-in-mobile-device-button">
+        <Button
+          variant="outline"
+          size={triggerSize}
+          className={cn(triggerClassName)}
+          data-testid="sign-in-mobile-device-button"
+        >
           Sign in mobile device
         </Button>
       </DialogTrigger>

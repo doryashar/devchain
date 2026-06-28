@@ -45,7 +45,7 @@ describe('Watcher → Subscriber E2E Flow', () => {
     deliverImmediate: jest.Mock;
     sendControl: jest.Mock;
     createEmptySession: jest.Mock;
-    disableAlternateScreen: jest.Mock;
+    setAlternateScreen: jest.Mock;
     destroySession: jest.Mock;
     typeCommand: jest.Mock;
     waitForOutput: jest.Mock;
@@ -163,7 +163,7 @@ describe('Watcher → Subscriber E2E Flow', () => {
       deliverImmediate: jest.fn().mockResolvedValue({ confirmed: true, method: 'bracketed-paste' }),
       sendControl: jest.fn().mockResolvedValue(undefined),
       createEmptySession: jest.fn().mockResolvedValue({ name: 'tmux-session' }),
-      disableAlternateScreen: jest.fn().mockResolvedValue(undefined),
+      setAlternateScreen: jest.fn().mockResolvedValue(undefined),
       destroySession: jest.fn().mockResolvedValue(undefined),
       typeCommand: jest.fn().mockResolvedValue(undefined),
       waitForOutput: jest.fn().mockResolvedValue(true),

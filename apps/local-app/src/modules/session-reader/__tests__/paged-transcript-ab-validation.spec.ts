@@ -138,9 +138,10 @@ function setupResolveChain(_session: UnifiedSession) {
   mockSessionCacheService.getOrParseWithMeta.mockImplementation(
     async (
       _id: string,
-      filePath: string,
+      source: string | { filePath: string },
       adapter: { parseFullSession: (p: string) => Promise<UnifiedSession> },
     ) => {
+      const filePath = typeof source === 'string' ? source : source.filePath;
       const parsed = await adapter.parseFullSession(filePath);
       return {
         session: parsed,
@@ -148,6 +149,7 @@ function setupResolveChain(_session: UnifiedSession) {
         lastOffset: 204800,
         lastSize: 204800,
         lastMtime: Date.now(),
+        sourceVersion: 204800,
       };
     },
   );

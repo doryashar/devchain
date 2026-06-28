@@ -54,7 +54,7 @@ describe('useSeedManager', () => {
     jest.useRealTimers();
   });
 
-  it('should handle seed chunks and complete (Option A - skips content write)', () => {
+  it('should handle seed chunks and complete without resize jiggle', () => {
     const sessionId = 'test-session';
     const xtermRef = { current: mockTerminal };
     const fitAddonRef = { current: mockFitAddon };
@@ -86,14 +86,14 @@ describe('useSeedManager', () => {
         chunk: 2,
         totalChunks: 3,
         data: 'chunk2',
+        hasHistory: true,
       });
     });
 
-    // Option A: Seed content is NOT written - we skip it for TUI redraw
     expect(mockTerminal.reset).toHaveBeenCalled();
     expect(mockTerminal.clear).toHaveBeenCalled();
-    // Seed content is NOT written (Option A)
-    expect(mockTerminal.write).not.toHaveBeenCalledWith('chunk0chunk1chunk2', expect.any(Function));
+    expect(mockTerminal.write).toHaveBeenCalledWith('chunk0chunk1chunk2', expect.any(Function));
+    expect(mockSocket.emit).not.toHaveBeenCalledWith('terminal:resize', expect.anything());
     expect(mockDispatch).toHaveBeenCalledWith({ type: 'SEED_COMPLETE' });
     // hasHistory enabled for scroll-up loading
     expect(hasHistoryRef.current).toBe(true);
@@ -135,7 +135,7 @@ describe('useSeedManager', () => {
     expect(result.current.pendingWritesRef.current).toEqual(['write1', 'write2']);
   });
 
-  it('should clear pending writes after seed completes (Option A - no seed write)', () => {
+  it('should clear pending writes after seed completes', () => {
     const sessionId = 'test-session';
     const xtermRef = { current: mockTerminal };
     const fitAddonRef = { current: mockFitAddon };
@@ -174,15 +174,128 @@ describe('useSeedManager', () => {
         chunk: 1,
         totalChunks: 2,
         data: 'seed2',
+        hasHistory: true,
       });
     });
 
-    // Option A: Seed content is NOT written - we skip it for TUI redraw
-    // Verify reset/clear are called (terminal preparation)
     expect(mockTerminal.reset).toHaveBeenCalled();
     expect(mockTerminal.clear).toHaveBeenCalled();
+    expect(mockTerminal.write).toHaveBeenCalledWith('seed1seed2', expect.any(Function));
+    expect(result.current.pendingWritesRef.current).toEqual([]);
     // Verify hasHistoryRef is set to true for scroll-up history loading
     expect(hasHistoryRef.current).toBe(true);
+  });
+
+  it('restores captured cursor position after seed write', () => {
+    const sessionId = 'test-session';
+    const xtermRef = { current: mockTerminal };
+    const fitAddonRef = { current: mockFitAddon };
+
+    const { result } = renderHook(() =>
+      useSeedManager(
+        sessionId,
+        xtermRef,
+        fitAddonRef,
+        mockDispatch,
+        expectingSeedRef,
+        hasHistoryRef,
+      ),
+    );
+
+    act(() => {
+      result.current.handleSeedChunk({
+        chunk: 0,
+        totalChunks: 1,
+        data: 'seed',
+        cursorX: 3,
+        cursorY: 4,
+        hasHistory: true,
+      });
+    });
+
+    expect(mockTerminal.write).toHaveBeenNthCalledWith(1, 'seed', expect.any(Function));
+    expect(mockTerminal.write).toHaveBeenNthCalledWith(2, '\x1b[5;4H', expect.any(Function));
+  });
+
+  it('keeps history disabled until seed replay settles', () => {
+    const sessionId = 'test-session';
+    const xtermRef = { current: mockTerminal };
+    const fitAddonRef = { current: mockFitAddon };
+    const writeCallbacks: Array<(() => void) | undefined> = [];
+    mockTerminal.write.mockImplementation((_data, callback) => {
+      writeCallbacks.push(callback);
+    });
+
+    const { result } = renderHook(() =>
+      useSeedManager(
+        sessionId,
+        xtermRef,
+        fitAddonRef,
+        mockDispatch,
+        expectingSeedRef,
+        hasHistoryRef,
+      ),
+    );
+
+    act(() => {
+      result.current.handleSeedChunk({
+        chunk: 0,
+        totalChunks: 1,
+        data: 'seed',
+        cursorX: 3,
+        cursorY: 4,
+        hasHistory: true,
+      });
+    });
+
+    expect(hasHistoryRef.current).toBe(false);
+    expect(mockDispatch).not.toHaveBeenCalledWith({ type: 'SEED_COMPLETE' });
+
+    act(() => {
+      writeCallbacks[0]?.();
+    });
+
+    expect(mockTerminal.scrollToBottom).toHaveBeenCalled();
+    expect(mockTerminal.write).toHaveBeenNthCalledWith(2, '\x1b[5;4H', expect.any(Function));
+    expect(hasHistoryRef.current).toBe(false);
+    expect(mockDispatch).not.toHaveBeenCalledWith({ type: 'SEED_COMPLETE' });
+
+    act(() => {
+      writeCallbacks[1]?.();
+    });
+
+    expect(hasHistoryRef.current).toBe(true);
+    expect(mockDispatch).toHaveBeenCalledWith({ type: 'SEED_COMPLETE' });
+  });
+
+  it('honors hasHistory=false from the server (alt-screen seed advertises no history affordance)', () => {
+    const sessionId = 'test-session';
+    const xtermRef = { current: mockTerminal };
+    const fitAddonRef = { current: mockFitAddon };
+
+    const { result } = renderHook(() =>
+      useSeedManager(
+        sessionId,
+        xtermRef,
+        fitAddonRef,
+        mockDispatch,
+        expectingSeedRef,
+        hasHistoryRef,
+      ),
+    );
+
+    act(() => {
+      result.current.handleSeedChunk({
+        chunk: 0,
+        totalChunks: 1,
+        data: 'alt-screen-seed',
+        hasHistory: false,
+      });
+    });
+
+    // Even after a settled seed, history stays disabled because the server said so.
+    expect(hasHistoryRef.current).toBe(false);
+    expect(mockDispatch).toHaveBeenCalledWith({ type: 'SEED_COMPLETE' });
   });
 
   it('should timeout seed after 30 seconds', () => {
@@ -420,5 +533,151 @@ describe('useSeedManager', () => {
     });
 
     expect(expectingSeedRef.current).toBe(false);
+  });
+
+  // SEED-RACE FIX — onSeedReady (which the client uses to fire the server-gated
+  // `terminal:restore_viewport_modes` redraw request, see ChatTerminal.tsx:161)
+  // MUST fire AFTER the seed write settles, not when the final seed_ansi chunk
+  // arrives. A redraw during the seed-replay window is discarded (the client is
+  // mid-reset), so firing on final-chunk-arrival would lose the alt-screen +
+  // mouse-mode restore. This is the client half of the seed-race; the server
+  // gating (maybeRestoreViewportModes) is covered in terminal.gateway.spec.ts.
+  describe('seed-race — onSeedReady fires after seed write settles (not on final chunk)', () => {
+    it('does NOT call onSeedReady when the final chunk arrives but the write has not settled', () => {
+      const onSeedReady = jest.fn();
+      // Hold the write callback open so we can observe the pre-settle state.
+      const writeCallbacks: Array<(() => void) | undefined> = [];
+      mockTerminal.write.mockImplementation((_data, callback) => {
+        writeCallbacks.push(callback);
+      });
+
+      const { result } = renderHook(() =>
+        useSeedManager(
+          'race-sess',
+          { current: mockTerminal },
+          { current: mockFitAddon },
+          mockDispatch,
+          expectingSeedRef,
+          hasHistoryRef,
+          onSeedReady,
+        ),
+      );
+
+      // Send the (single) final chunk — write is queued but callback NOT yet invoked.
+      // No cursor coords → single-write path (fullSeed write callback → finishSeedWrite).
+      act(() => {
+        result.current.handleSeedChunk({
+          chunk: 0,
+          totalChunks: 1,
+          data: 'seed',
+        });
+      });
+
+      // Final chunk has arrived, but neither the write nor the 400ms settle has completed.
+      expect(onSeedReady).not.toHaveBeenCalled();
+
+      // Even after the write callback fires, onSeedReady is still behind the
+      // 400ms settle timeout (it must NOT fire synchronously off the write).
+      act(() => {
+        writeCallbacks[0]?.();
+      });
+      expect(onSeedReady).not.toHaveBeenCalled();
+
+      // NOW the settle timeout elapses → onSeedReady fires (redraw request goes out).
+      act(() => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onSeedReady).toHaveBeenCalledTimes(1);
+    });
+
+    it('redraw request (onSeedReady) does NOT fire on partial seed (final chunk not yet received)', () => {
+      const onSeedReady = jest.fn();
+      const { result } = renderHook(() =>
+        useSeedManager(
+          'partial-sess',
+          { current: mockTerminal },
+          { current: mockFitAddon },
+          mockDispatch,
+          expectingSeedRef,
+          hasHistoryRef,
+          onSeedReady,
+        ),
+      );
+
+      act(() => {
+        result.current.handleSeedChunk({ chunk: 0, totalChunks: 3, data: 'a' });
+        result.current.handleSeedChunk({ chunk: 1, totalChunks: 3, data: 'b' });
+      });
+
+      // Advance well past the 400ms settle — final chunk never arrived, so no redraw.
+      act(() => {
+        jest.advanceTimersByTime(1000);
+      });
+      expect(onSeedReady).not.toHaveBeenCalled();
+    });
+  });
+
+  // CROSS-PROVIDER hasHistory WIDENING — the client now honors the server's
+  // hasHistory flag for ALL providers (previously it was unconditionally true,
+  // showing a dead scroll-up affordance for non-truncated / alt-screen seeds).
+  // The server computes hasHistory two ways: the realtime seed path
+  // (terminal-session.ts: hasHistory = !usesAlternateScreen) and the gateway
+  // seed path (terminal-seed.service.ts: hasHistory = wasTruncated). The client
+  // just honors whatever it receives — these tests make the cross-provider
+  // widening intentional and verified.
+  describe('cross-provider hasHistory widening (client honors server flag for all providers)', () => {
+    const renderAndCompleteSeed = (hasHistory: boolean) => {
+      const { result } = renderHook(() =>
+        useSeedManager(
+          'xprovider-sess',
+          { current: mockTerminal },
+          { current: mockFitAddon },
+          mockDispatch,
+          expectingSeedRef,
+          hasHistoryRef,
+        ),
+      );
+
+      act(() => {
+        result.current.handleSeedChunk({
+          chunk: 0,
+          totalChunks: 1,
+          data: 'seed',
+          cursorX: 0,
+          cursorY: 0,
+          hasHistory,
+        });
+      });
+
+      return result;
+    };
+
+    it('claude/codex TRUNCATED seed (server hasHistory=true) SHOWS the scroll-up affordance', () => {
+      renderAndCompleteSeed(true);
+      // Default mockTerminal.write invokes its callback synchronously, so the
+      // finishSeedWrite path runs and resolves hasHistoryRef immediately.
+      expect(hasHistoryRef.current).toBe(true);
+    });
+
+    it('claude/codex NON-truncated seed (server hasHistory=false) HIDES the scroll-up affordance (widening)', () => {
+      // The widening: previously the client ignored the flag and always showed
+      // the affordance. A non-truncated seed means the whole scrollback fit in
+      // the seed → there is nothing more to load → the affordance must be hidden.
+      renderAndCompleteSeed(false);
+      expect(hasHistoryRef.current).toBe(false);
+    });
+
+    it('opencode alt-screen seed (server hasHistory=false) HIDES the scroll-up affordance', () => {
+      // Alt-screen TUIs have no loadable primary-buffer scrollback (capture-pane
+      // only holds the single visible screen) → server advertises false.
+      renderAndCompleteSeed(false);
+      expect(hasHistoryRef.current).toBe(false);
+    });
+
+    it('defaults to HIDING when the server omits hasHistory (defensive — no dead affordance)', () => {
+      // hasHistory undefined → state.hasHistory === true is false → hidden.
+      renderAndCompleteSeed(undefined as unknown as boolean);
+      expect(hasHistoryRef.current).toBe(false);
+    });
   });
 });

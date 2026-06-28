@@ -104,6 +104,35 @@ describe('SignInMobileDeviceDialog', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
+  it('renders with default sm size (existing behaviour preserved)', () => {
+    render(<SignInMobileDeviceDialog identityServiceUrl="http://localhost:3002" />);
+    const btn = screen.getByTestId('sign-in-mobile-device-button');
+    // shadcn Button size="sm" uses h-9 in this codebase
+    expect(btn).toHaveClass('h-9');
+  });
+
+  it('applies triggerClassName to the trigger button', () => {
+    render(
+      <SignInMobileDeviceDialog
+        identityServiceUrl="http://localhost:3002"
+        triggerClassName="w-full custom-class"
+      />,
+    );
+    const btn = screen.getByTestId('sign-in-mobile-device-button');
+    expect(btn).toHaveClass('w-full');
+    expect(btn).toHaveClass('custom-class');
+  });
+
+  it('renders a larger button when triggerSize="default"', () => {
+    render(
+      <SignInMobileDeviceDialog identityServiceUrl="http://localhost:3002" triggerSize="default" />,
+    );
+    const btn = screen.getByTestId('sign-in-mobile-device-button');
+    // shadcn Button size="default" uses h-10; size="sm" uses h-9
+    expect(btn).toHaveClass('h-10');
+    expect(btn).not.toHaveClass('h-9');
+  });
+
   it('calls cancel and closes dialog on Cancel click', () => {
     const cancel = jest.fn();
     mockUseQrAuth.mockReturnValue({

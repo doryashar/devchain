@@ -27,6 +27,8 @@ export interface SessionDto {
   epicId: string | null;
   agentId: string | null;
   tmuxSessionId: string | null;
+  /** Provider-native session id (e.g. OpenCode `ses_…`); locates DB-backed sources. */
+  providerSessionId?: string | null;
   status: 'running' | 'stopped' | 'failed';
   startedAt: string;
   endedAt: string | null;

@@ -52,6 +52,22 @@ describe('CloudStatusIndicator', () => {
       renderIndicator();
       expect(screen.queryByTestId('cloud-account-menu')).not.toBeInTheDocument();
     });
+
+    it('renders the CloudOff icon with aria-hidden="true"', () => {
+      renderIndicator();
+      // lucide-react renders SVGs; find the svg inside the link button
+      const link = screen.getByRole('link', { name: /connect to cloud/i });
+      const svg = link.querySelector('svg');
+      expect(svg).toBeInTheDocument();
+      expect(svg).toHaveAttribute('aria-hidden', 'true');
+    });
+
+    it('applies text-destructive class to the CloudOff icon', () => {
+      renderIndicator();
+      const link = screen.getByRole('link', { name: /connect to cloud/i });
+      const svg = link.querySelector('svg');
+      expect(svg).toHaveClass('text-destructive');
+    });
   });
 
   describe('signed-in', () => {

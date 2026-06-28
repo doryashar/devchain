@@ -25,6 +25,8 @@ jest.mock('@xterm/xterm', () => ({
     onData: onDataMock,
     attachCustomWheelEventHandler: jest.fn(),
     onScroll: jest.fn().mockReturnValue({ dispose: jest.fn() }),
+    onSelectionChange: jest.fn().mockReturnValue({ dispose: jest.fn() }),
+    getSelection: jest.fn().mockReturnValue(''),
     scrollLines: jest.fn(),
     parser: { registerOscHandler: jest.fn() },
     element: null,

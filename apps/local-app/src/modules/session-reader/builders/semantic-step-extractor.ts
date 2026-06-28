@@ -18,9 +18,11 @@ const INTERRUPTION_PATTERN = /\[Request interrupted by user\]/i;
 /**
  * Extract semantic steps from an array of AI chunk messages.
  *
- * Assistant messages produce thinking, tool_call, output, and subagent steps.
- * User messages within the AI buffer produce tool_result steps (from toolResults).
- * Steps are returned in message order.
+ * Assistant messages produce thinking, tool_call, output, and subagent steps, plus
+ * tool_result steps for any FOLDED tool results (parsers fold a tool turn's results onto
+ * the preceding assistant message — claude/codex/opencode/gemini). User messages within
+ * the AI buffer also produce tool_result steps (the parser fallback when a tool_result has
+ * no preceding assistant). Steps are returned in message order, results after their calls.
  */
 export function extractSemanticSteps(messages: UnifiedMessage[]): UnifiedSemanticStep[] {
   const steps: UnifiedSemanticStep[] = [];
@@ -29,6 +31,10 @@ export function extractSemanticSteps(messages: UnifiedMessage[]): UnifiedSemanti
   for (const msg of messages) {
     if (msg.role === 'assistant') {
       extractAssistantSteps(msg, steps, stepIndex);
+      stepIndex = steps.length;
+      // Folded tool results live on the assistant message's toolResults — emit them right
+      // after the call steps so the result still renders within the turn.
+      extractToolResultSteps(msg, steps, stepIndex);
       stepIndex = steps.length;
     } else if (msg.role === 'user') {
       extractToolResultSteps(msg, steps, stepIndex);

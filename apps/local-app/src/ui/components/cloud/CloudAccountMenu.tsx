@@ -40,7 +40,7 @@ export function CloudAccountMenu({
           <span className="max-w-[120px] truncate">{email || userId.slice(0, 8)}</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" side="top">
         <div className="px-2 py-1.5">
           <p className="text-sm font-medium">Cloud connected</p>
           {email && <p className="text-xs text-muted-foreground">{email}</p>}

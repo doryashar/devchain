@@ -45,6 +45,7 @@ import { OrchestratorProxyModule } from './modules/orchestrator/proxy/orchestrat
 import { CodebaseOverviewAnalyzerModule } from './modules/codebase-overview-analyzer/codebase-overview-analyzer.module';
 import { CloudModule } from './modules/cloud/cloud.module';
 import { CloudTunnelModule } from './modules/cloud-tunnel/cloud-tunnel.module';
+import { E2eeModule } from './modules/e2ee/e2ee.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { CloudTunnelModule } from './modules/cloud-tunnel/cloud-tunnel.module';
     CodebaseOverviewAnalyzerModule,
     CloudModule,
     CloudTunnelModule,
+    E2eeModule,
   ],
   controllers: [],
   providers: [

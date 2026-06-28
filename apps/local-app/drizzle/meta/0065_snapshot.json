@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d50218cd-60ef-4ae7-bd9c-b8c702e2faec",
+  "id": "1e64f8e5-e146-46a7-a397-3139c6fe64ec",
   "prevId": "a903e1bc-5ba7-45d2-b295-7a73d33091d3",
   "tables": {
     "agent_profile_prompts": {
@@ -1293,368 +1293,6 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "connector_field_mappings": {
-      "name": "connector_field_mappings",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "connector_id": {
-          "name": "connector_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "devchain_field": {
-          "name": "devchain_field",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_field": {
-          "name": "external_field",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transform": {
-          "name": "transform",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "connector_field_mappings_connector_id_idx": {
-          "name": "connector_field_mappings_connector_id_idx",
-          "columns": [
-            "connector_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "connector_field_mappings_connector_id_connectors_id_fk": {
-          "name": "connector_field_mappings_connector_id_connectors_id_fk",
-          "tableFrom": "connector_field_mappings",
-          "tableTo": "connectors",
-          "columnsFrom": [
-            "connector_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "connector_status_mappings": {
-      "name": "connector_status_mappings",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "connector_id": {
-          "name": "connector_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "devchain_status_label": {
-          "name": "devchain_status_label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_status_id": {
-          "name": "external_status_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "direction": {
-          "name": "direction",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'both'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "connector_status_mappings_connector_id_idx": {
-          "name": "connector_status_mappings_connector_id_idx",
-          "columns": [
-            "connector_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "connector_status_mappings_connector_id_connectors_id_fk": {
-          "name": "connector_status_mappings_connector_id_connectors_id_fk",
-          "tableFrom": "connector_status_mappings",
-          "tableTo": "connectors",
-          "columnsFrom": [
-            "connector_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "connector_sync_state": {
-      "name": "connector_sync_state",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "connector_id": {
-          "name": "connector_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "epic_id": {
-          "name": "epic_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_id": {
-          "name": "external_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_synced_at": {
-          "name": "last_synced_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_synced_hash": {
-          "name": "last_synced_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "connector_sync_state_connector_epic_idx": {
-          "name": "connector_sync_state_connector_epic_idx",
-          "columns": [
-            "connector_id",
-            "epic_id"
-          ],
-          "isUnique": true
-        },
-        "connector_sync_state_connector_external_idx": {
-          "name": "connector_sync_state_connector_external_idx",
-          "columns": [
-            "connector_id",
-            "external_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "connector_sync_state_connector_id_connectors_id_fk": {
-          "name": "connector_sync_state_connector_id_connectors_id_fk",
-          "tableFrom": "connector_sync_state",
-          "tableTo": "connectors",
-          "columnsFrom": [
-            "connector_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "connector_sync_state_epic_id_epics_id_fk": {
-          "name": "connector_sync_state_epic_id_epics_id_fk",
-          "tableFrom": "connector_sync_state",
-          "tableTo": "epics",
-          "columnsFrom": [
-            "epic_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "connectors": {
-      "name": "connectors",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "type": {
-          "name": "type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enabled": {
-          "name": "enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "config": {
-          "name": "config",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_project_id": {
-          "name": "external_project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "connectors_project_id_idx": {
-          "name": "connectors_project_id_idx",
-          "columns": [
-            "project_id"
-          ],
-          "isUnique": false
-        },
-        "connectors_type_idx": {
-          "name": "connectors_type_idx",
-          "columns": [
-            "type"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "connectors_project_id_projects_id_fk": {
-          "name": "connectors_project_id_projects_id_fk",
-          "tableFrom": "connectors",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -3105,6 +2743,88 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "provider_env_scopes": {
+      "name": "provider_env_scopes",
+      "columns": {
+        "provider_id": {
+          "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "env_key": {
+          "name": "env_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "provider_env_scopes_project_id_idx": {
+          "name": "provider_env_scopes_project_id_idx",
+          "columns": [
+            "project_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "provider_env_scopes_provider_id_providers_id_fk": {
+          "name": "provider_env_scopes_provider_id_providers_id_fk",
+          "tableFrom": "provider_env_scopes",
+          "tableTo": "providers",
+          "columnsFrom": [
+            "provider_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "provider_env_scopes_project_id_projects_id_fk": {
+          "name": "provider_env_scopes_project_id_projects_id_fk",
+          "tableFrom": "provider_env_scopes",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "provider_env_scopes_provider_id_env_key_project_id_pk": {
+          "columns": [
+            "provider_id",
+            "env_key",
+            "project_id"
+          ],
+          "name": "provider_env_scopes_provider_id_env_key_project_id_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

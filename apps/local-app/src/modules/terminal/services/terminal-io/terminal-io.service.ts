@@ -73,9 +73,22 @@ export class TerminalIOService implements OnModuleDestroy {
     });
   }
 
-  async disableAlternateScreen(target: SessionTarget): Promise<void> {
+  /**
+   * Explicitly set tmux's per-window alternate-screen option. `enabled=true` keeps
+   * alt-screen on (full-screen TUI providers); `false` suppresses it (the default,
+   * preserving scrollback for line-streaming CLIs). Setting it explicitly is
+   * deterministic even when a global ~/.tmux.conf flips the option the other way.
+   */
+  async setAlternateScreen(target: SessionTarget, enabled: boolean): Promise<void> {
     await this.executor.run({
-      argv: ['tmux', 'set-window-option', '-t', `=${target.name}`, 'alternate-screen', 'off'],
+      argv: [
+        'tmux',
+        'set-window-option',
+        '-t',
+        `=${target.name}`,
+        'alternate-screen',
+        enabled ? 'on' : 'off',
+      ],
       mode: 'pipe',
     });
   }

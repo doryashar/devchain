@@ -10,3 +10,9 @@ const BARE_LF_RE = /(?<!\r)\n/g;
 export function normalizeLineEndings(data: string): string {
   return data.replace(BARE_LF_RE, '\r\n');
 }
+
+export function stripFinalLineEnding(data: string): string {
+  if (data.endsWith('\r\n')) return data.slice(0, -2);
+  if (data.endsWith('\n')) return data.slice(0, -1);
+  return data;
+}

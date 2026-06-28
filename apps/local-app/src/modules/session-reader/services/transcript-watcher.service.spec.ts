@@ -136,6 +136,8 @@ function createMocks() {
 
   const mockCacheService = {
     getOrParse: jest.fn().mockResolvedValue(makeSession()),
+    getOrParseWithMeta: jest.fn(),
+    getEntry: jest.fn(),
     invalidate: jest.fn(),
     clear: jest.fn(),
     onModuleDestroy: jest.fn(),
@@ -413,6 +415,95 @@ describe('TranscriptWatcherService', () => {
       await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
 
       mockedFsPromisesStat.mockResolvedValue(makeStat(1500));
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(mockEvents.publish).not.toHaveBeenCalledWith(
+        'session.transcript.updated',
+        expect.anything(),
+      );
+    });
+
+    it('M1: emits a full refresh (no negative delta, replaceFromChunkIndex 0) when messageCount deflates', async () => {
+      // Seed a stale, inflated count of 8 (pre-fold cached session), then the re-parse
+      // returns the folded, lower count of 6 even though the file grew.
+      mockCacheService.getOrParse
+        .mockResolvedValueOnce(makeSession({ metrics: makeMetrics({ messageCount: 8 }) }))
+        .mockResolvedValue(
+          makeSession({ metrics: makeMetrics({ messageCount: 6, totalTokens: 600 }) }),
+        );
+
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+
+      // File grew (new content) but the parser folds away phantom tool_result entries.
+      mockedFsPromisesStat.mockResolvedValue(makeStat(2000));
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(mockEvents.publish).toHaveBeenCalledWith(
+        'session.transcript.updated',
+        expect.objectContaining({
+          sessionId: SESSION_ID,
+          // Clamped to ≥0 — never a negative delta on the wire.
+          newMessageCount: 0,
+          // Full refresh replaces the window from the start.
+          replaceFromChunkIndex: 0,
+          metrics: expect.objectContaining({ messageCount: 6 }),
+        }),
+      );
+
+      // Sanity: the published newMessageCount is never negative.
+      const call = mockEvents.publish.mock.calls.find(
+        ([eventName]) => eventName === 'session.transcript.updated',
+      );
+      expect(call).toBeDefined();
+      expect((call![1] as { newMessageCount: number }).newMessageCount).toBeGreaterThanOrEqual(0);
+    });
+
+    it('publishes a zero-count in-place tail replacement on a cache-boundary fold (no new messages)', async () => {
+      // Seed count 5; the boundary fold appends a tool_result onto the cached tail →
+      // count stays 5 (no new message) but the tail chunk changed.
+      mockCacheService.getOrParse
+        .mockResolvedValueOnce(makeSession({ metrics: makeMetrics({ messageCount: 5 }) }))
+        .mockResolvedValue(makeSession({ metrics: makeMetrics({ messageCount: 5 }) }));
+      // The cache reports the merge folded leading tool_results onto the tail.
+      (mockCacheService.getEntry as jest.Mock).mockReturnValue({ boundaryFold: true });
+
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+
+      // File grew (the tool_result was appended) but messageCount did not increase.
+      mockedFsPromisesStat.mockResolvedValue(makeStat(1800));
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await jest.advanceTimersByTimeAsync(200);
+
+      const call = mockEvents.publish.mock.calls.find(
+        ([eventName]) => eventName === 'session.transcript.updated',
+      );
+      expect(call).toBeDefined();
+      const payload = call![1] as {
+        newMessageCount: number;
+        replaceFromChunkIndex: number;
+        deltaChunks: unknown[];
+      };
+      // Zero-count in-place tail replacement — NOT a positive unread delta.
+      expect(payload.newMessageCount).toBe(0);
+      expect(payload.replaceFromChunkIndex).toBeGreaterThanOrEqual(0);
+      expect(Array.isArray(payload.deltaChunks)).toBe(true);
+    });
+
+    it('does NOT publish when messageCount is unchanged and no boundary fold occurred', async () => {
+      // Appended content produced no new messages and no fold (e.g. filtered/noise lines).
+      mockCacheService.getOrParse
+        .mockResolvedValueOnce(makeSession({ metrics: makeMetrics({ messageCount: 5 }) }))
+        .mockResolvedValue(makeSession({ metrics: makeMetrics({ messageCount: 5 }) }));
+      (mockCacheService.getEntry as jest.Mock).mockReturnValue({ boundaryFold: false });
+
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+
+      mockedFsPromisesStat.mockResolvedValue(makeStat(1800));
 
       await jest.advanceTimersByTimeAsync(3000);
       await jest.advanceTimersByTimeAsync(200);
@@ -1121,6 +1212,289 @@ describe('TranscriptWatcherService', () => {
       for (const chunk of payload.deltaChunks) {
         expect(chunk).not.toHaveProperty('turns');
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getLastKnownMessageCount: O(1) cached read (feeds chat.listAgents enrichment)
+  // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // DB-backed sources (OpenCode): freshness-poll, -wal hint, in-place updates
+  // -------------------------------------------------------------------------
+
+  describe('DB-backed sources', () => {
+    const DB_PATH = '/home/user/.local/share/opencode/opencode.db';
+    const SES = 'ses_abc';
+
+    function makeDbAdapter(getFreshnessToken: jest.Mock): SessionReaderAdapter {
+      return {
+        providerName: 'opencode',
+        incrementalMode: 'snapshot',
+        sourceKind: 'db',
+        allowedRoots: [],
+        discoverSessionFile: jest.fn(),
+        parseSessionFile: jest.fn(),
+        parseIncremental: jest.fn(),
+        getWatchPaths: jest.fn(),
+        calculateCost: jest.fn(),
+        parseFullSession: jest.fn(),
+        getFreshnessToken,
+      } as unknown as SessionReaderAdapter;
+    }
+
+    function dbSession(messageCount: number): UnifiedSession {
+      const messages = [
+        {
+          id: 'u1',
+          parentId: null,
+          role: 'user' as const,
+          timestamp: new Date('2026-01-01T10:00:00.000Z'),
+          content: [{ type: 'text', text: 'hi' }],
+          toolCalls: [],
+          toolResults: [],
+          isMeta: false,
+          isSidechain: false,
+        },
+        {
+          id: 'a1',
+          parentId: null,
+          role: 'assistant' as const,
+          timestamp: new Date('2026-01-01T10:00:05.000Z'),
+          content: [{ type: 'text', text: 'response' }],
+          toolCalls: [],
+          toolResults: [],
+          isMeta: false,
+          isSidechain: false,
+          usage: { input: 100, output: 50, cacheRead: 0, cacheCreation: 0 },
+        },
+      ].slice(0, messageCount);
+      return makeSession({
+        providerName: 'opencode',
+        filePath: DB_PATH,
+        messages: messages as never[],
+        metrics: makeMetrics({ messageCount }),
+      });
+    }
+
+    it('skips the watcher when a DB source has no providerSessionId', async () => {
+      const adapter = makeDbAdapter(jest.fn().mockResolvedValue({ count: 1, maxUpdated: 1 }));
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+
+      await service.startWatching(SES, DB_PATH, 'opencode'); // no providerSessionId
+
+      expect(service.activeWatcherCount).toBe(0);
+    });
+
+    it('watches the -wal sidecar (hint) and seeds via getFreshnessToken', async () => {
+      const getFreshnessToken = jest.fn().mockResolvedValue({ count: 5, maxUpdated: 100 });
+      const adapter = makeDbAdapter(getFreshnessToken);
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+      (mockCacheService.getOrParseWithMeta as jest.Mock).mockResolvedValue({
+        session: dbSession(2),
+        sourceVersion: 5,
+        cacheHit: false,
+        lastOffset: 5,
+        lastSize: 5,
+        lastMtime: 0,
+      });
+
+      await service.startWatching(SES, DB_PATH, 'opencode', 'ses_abc');
+
+      expect(service.activeWatcherCount).toBe(1);
+      expect(mockedFsWatch).toHaveBeenCalledWith(`${DB_PATH}-wal`, expect.any(Function));
+      expect(getFreshnessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ providerSessionId: 'ses_abc', kind: 'db' }),
+      );
+    });
+
+    it('stays active when fs.watch on -wal throws ENOENT (poll is authoritative)', async () => {
+      mockedFsWatch.mockImplementation(() => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      });
+      const adapter = makeDbAdapter(jest.fn().mockResolvedValue({ count: 1, maxUpdated: 1 }));
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+      (mockCacheService.getOrParseWithMeta as jest.Mock).mockResolvedValue({
+        session: dbSession(2),
+        sourceVersion: 1,
+        cacheHit: false,
+        lastOffset: 1,
+        lastSize: 1,
+        lastMtime: 0,
+      });
+
+      await service.startWatching(SES, DB_PATH, 'opencode', 'ses_abc');
+
+      expect(service.activeWatcherCount).toBe(1);
+    });
+
+    it('emits transcript.updated on in-place revision change (newMessageCount=0)', async () => {
+      // Seed token, then poll token, then confirm token (handler) — all differ from seed.
+      const getFreshnessToken = jest
+        .fn()
+        .mockResolvedValueOnce({ count: 5, maxUpdated: 100 }) // seed
+        .mockResolvedValue({ count: 7, maxUpdated: 200 }); // poll + handler (parts added, same msgs)
+      const adapter = makeDbAdapter(getFreshnessToken);
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+
+      (mockCacheService.getOrParseWithMeta as jest.Mock)
+        .mockResolvedValueOnce({
+          session: dbSession(2),
+          sourceVersion: 5,
+          cacheHit: false,
+          lastOffset: 5,
+          lastSize: 5,
+          lastMtime: 0,
+        })
+        .mockResolvedValue({
+          session: dbSession(2), // SAME message count — only parts changed in place
+          sourceVersion: 7,
+          cacheHit: false,
+          lastOffset: 7,
+          lastSize: 7,
+          lastMtime: 0,
+        });
+
+      await service.startWatching(SES, DB_PATH, 'opencode', 'ses_abc');
+
+      await jest.advanceTimersByTimeAsync(3000); // poll → token changed → debounce
+      await jest.advanceTimersByTimeAsync(200); // debounce → handleDbChanged
+
+      const call = mockEvents.publish.mock.calls.find(
+        ([name]) => name === 'session.transcript.updated',
+      );
+      expect(call).toBeDefined();
+      const payload = call![1] as { newMessageCount: number; deltaChunks: unknown[] };
+      expect(payload.newMessageCount).toBe(0); // in-place: no new messages
+      expect(payload.deltaChunks.length).toBeGreaterThan(0); // last chunk replaced
+    });
+
+    it('M1: emits a full refresh (replaceFromChunkIndex 0, no negative delta) when messageCount deflates', async () => {
+      // The coalescer shrinks an OpenCode count on the first refresh (e.g. 85→~10).
+      // Without the deflation guard the client would receive replaceFromChunkIndex
+      // beyond the new (smaller) chunk set — an out-of-range splice anchor.
+      const getFreshnessToken = jest
+        .fn()
+        .mockResolvedValueOnce({ count: 85, maxUpdated: 100 }) // seed (inflated)
+        .mockResolvedValue({ count: 90, maxUpdated: 200 }); // poll + handler (changed)
+      const adapter = makeDbAdapter(getFreshnessToken);
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+
+      (mockCacheService.getOrParseWithMeta as jest.Mock)
+        .mockResolvedValueOnce({
+          session: dbSession(85), // inflated pre-coalesce count
+          sourceVersion: 5,
+          cacheHit: false,
+          lastOffset: 5,
+          lastSize: 5,
+          lastMtime: 0,
+        })
+        .mockResolvedValue({
+          session: dbSession(10), // deflated post-coalesce count
+          sourceVersion: 7,
+          cacheHit: false,
+          lastOffset: 7,
+          lastSize: 7,
+          lastMtime: 0,
+        });
+
+      await service.startWatching(SES, DB_PATH, 'opencode', 'ses_abc');
+
+      await jest.advanceTimersByTimeAsync(3000); // poll → token changed → debounce
+      await jest.advanceTimersByTimeAsync(200); // debounce → handleDbChanged
+
+      const call = mockEvents.publish.mock.calls.find(
+        ([name]) => name === 'session.transcript.updated',
+      );
+      expect(call).toBeDefined();
+      const payload = call![1] as {
+        newMessageCount: number;
+        replaceFromChunkIndex: number;
+        deltaChunks: unknown[];
+        deltaMessages: unknown[];
+        totalChunkCount: number;
+        metrics: { messageCount: number };
+      };
+      // Full refresh replaces the window from the start — never an out-of-range splice.
+      expect(payload.replaceFromChunkIndex).toBe(0);
+      // Clamped to ≥0 — never a negative delta on the wire.
+      expect(payload.newMessageCount).toBe(0);
+      // Full-window replacement: the whole current transcript is published.
+      expect(payload.deltaChunks.length).toBeGreaterThan(0);
+      expect(payload.deltaMessages.length).toBeGreaterThan(0);
+      expect(payload.totalChunkCount).toBe(payload.deltaChunks.length);
+      // Cursor/metrics encode the NEW (deflated) count.
+      expect(payload.metrics.messageCount).toBe(10);
+    });
+
+    it('does NOT emit when the freshness token is unchanged', async () => {
+      const getFreshnessToken = jest.fn().mockResolvedValue({ count: 5, maxUpdated: 100 });
+      const adapter = makeDbAdapter(getFreshnessToken);
+      mockAdapterFactory.getAdapter.mockReturnValue(adapter);
+      (mockCacheService.getOrParseWithMeta as jest.Mock).mockResolvedValue({
+        session: dbSession(2),
+        sourceVersion: 5,
+        cacheHit: false,
+        lastOffset: 5,
+        lastSize: 5,
+        lastMtime: 0,
+      });
+
+      await service.startWatching(SES, DB_PATH, 'opencode', 'ses_abc');
+      await jest.advanceTimersByTimeAsync(3000);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(mockEvents.publish).not.toHaveBeenCalledWith(
+        'session.transcript.updated',
+        expect.anything(),
+      );
+    });
+  });
+
+  describe('getLastKnownMessageCount', () => {
+    it('returns the seeded message count for a watched session', async () => {
+      mockCacheService.getOrParse.mockResolvedValue(
+        makeSession({ metrics: makeMetrics({ messageCount: 7 }) }),
+      );
+
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+
+      expect(service.getLastKnownMessageCount(SESSION_ID)).toBe(7);
+    });
+
+    it('returns the seeded 0 count (NOT null) for a watched empty transcript', async () => {
+      mockCacheService.getOrParse.mockResolvedValue(
+        makeSession({ metrics: makeMetrics({ messageCount: 0 }) }),
+      );
+
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+
+      // A genuine 0 must round-trip as 0 (drives latestMessageCount: 0 on the
+      // agent item), not be collapsed to null (which would omit the badge).
+      expect(service.getLastKnownMessageCount(SESSION_ID)).toBe(0);
+    });
+
+    it('returns null when no watcher is active for the session', () => {
+      expect(service.getLastKnownMessageCount('never-watched-session')).toBeNull();
+    });
+
+    it('tracks the count as the watcher observes new messages', async () => {
+      mockCacheService.getOrParse.mockResolvedValue(
+        makeSession({ metrics: makeMetrics({ messageCount: 3 }) }),
+      );
+      await service.startWatching(SESSION_ID, FILE_PATH, PROVIDER_NAME);
+      expect(service.getLastKnownMessageCount(SESSION_ID)).toBe(3);
+
+      // File grows → the watcher now sees 6 messages.
+      mockCacheService.getOrParse.mockResolvedValue(
+        makeSession({ metrics: makeMetrics({ messageCount: 6 }) }),
+      );
+      mockedFsPromisesStat.mockResolvedValue(makeStat(2000));
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await jest.advanceTimersByTimeAsync(200);
+
+      expect(service.getLastKnownMessageCount(SESSION_ID)).toBe(6);
     });
   });
 });

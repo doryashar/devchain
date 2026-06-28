@@ -799,6 +799,62 @@ describe('TeamsStore', () => {
     });
   });
 
+  describe('listProfilesNotLinkedToAnyTeam', () => {
+    it('includes a profile linked to NO team and excludes one linked to ANY team', async () => {
+      const linked = await seedProfile(db, projectId, 'Linked');
+      const standalone = await seedProfile(db, projectId, 'Standalone');
+
+      // `linked` is attached to a team; `standalone` is attached to none.
+      await store.createTeam({
+        projectId,
+        name: 'Team With Profile',
+        memberAgentIds: [agentA],
+        profileIds: [linked],
+      });
+
+      const result = await store.listProfilesNotLinkedToAnyTeam(projectId);
+
+      expect(result).toContain(standalone);
+      expect(result).not.toContain(linked);
+    });
+
+    it('returns every project profile when no team links exist', async () => {
+      const p1 = await seedProfile(db, projectId, 'P1');
+      const p2 = await seedProfile(db, projectId, 'P2');
+
+      const result = await store.listProfilesNotLinkedToAnyTeam(projectId);
+
+      // (agentA/B/C each seeded a profile too; assert at least our standalone pair is present)
+      expect(result).toEqual(expect.arrayContaining([p1, p2]));
+    });
+
+    it("is project-scoped: another project's profiles never appear", async () => {
+      const otherProject = await seedProject(db, 'other-project');
+      const otherProfile = await seedProfile(db, otherProject, 'Other');
+      const mineStandalone = await seedProfile(db, projectId, 'Mine');
+
+      const result = await store.listProfilesNotLinkedToAnyTeam(projectId);
+
+      expect(result).toContain(mineStandalone);
+      expect(result).not.toContain(otherProfile);
+    });
+
+    it('a profile re-becomes standalone after its team is disbanded', async () => {
+      const profile = await seedProfile(db, projectId, 'Rejoiner');
+      const team = await store.createTeam({
+        projectId,
+        name: 'Temp Team',
+        memberAgentIds: [agentA],
+        profileIds: [profile],
+      });
+      expect(await store.listProfilesNotLinkedToAnyTeam(projectId)).not.toContain(profile);
+
+      await store.deleteTeam(team.id);
+
+      expect(await store.listProfilesNotLinkedToAnyTeam(projectId)).toContain(profile);
+    });
+  });
+
   describe('updateTeam with profileIds', () => {
     it('replaces profileIds', async () => {
       const profileA = await seedProfile(db, projectId, 'Profile-A');

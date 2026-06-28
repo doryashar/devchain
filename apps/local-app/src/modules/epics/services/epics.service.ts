@@ -9,7 +9,7 @@ import {
 } from '../../storage/interfaces/storage.interface';
 import type { Epic, EpicComment, UpdateEpic, CreateEpic } from '../../storage/models/domain.models';
 import { EventsService } from '../../events/services/events.service';
-import { ValidationError } from '../../../common/errors/error-types';
+import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import { SettingsService } from '../../settings/services/settings.service';
 import { AutoAssignRulesService } from '../../auto-assign-rules/services/auto-assign-rules.service';
 interface EpicBroadcastPayload {
@@ -510,6 +510,25 @@ export class EpicsService {
     }
 
     return comment;
+  }
+
+  /**
+   * Project-scoped comment deletion for the mobile board RPC. Verifies the epic
+   * belongs to `projectId` (cross-project → clean not-found, no leak), then
+   * deletes scoped to the owning epic (`WHERE id = ? AND epic_id = ?`). A comment
+   * that belongs to another epic — or is already gone — yields a clean not-found.
+   * No `epic.comment.deleted` event exists yet (v1 web parity; mobile refreshes).
+   */
+  async deleteEpicComment(projectId: string, epicId: string, commentId: string): Promise<void> {
+    const epic = await this.storage.getEpic(epicId);
+    if (epic.projectId !== projectId) {
+      throw new NotFoundError('Epic', epicId);
+    }
+
+    const deleted = await this.storage.deleteEpicCommentScoped(epicId, commentId);
+    if (!deleted) {
+      throw new NotFoundError('Comment', commentId);
+    }
   }
 
   /**

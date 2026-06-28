@@ -12,6 +12,7 @@ import type {
 } from '../dtos/unified-session.types';
 import type { PricingServiceInterface } from '../services/pricing.interface';
 import { estimateMessageTokens } from '../adapters/utils/estimate-content-tokens';
+import { isToolResultOnlyMessage } from '../adapters/utils/tool-result-fold';
 
 const logger = createLogger('ClaudeJsonlParser');
 
@@ -148,6 +149,16 @@ export async function parseClaudeJsonl(
 
   // Ongoing detection: track last assistant stop_reason
   let lastAssistantStopReason: string | null = null;
+
+  // Tool-result folding: the last assistant message pushed (per stream), so a standalone
+  // user(tool_result) entry folds onto it instead of being counted as its own message.
+  let lastAssistantMessage: UnifiedMessage | null = null;
+
+  // Stop reason of `lastAssistantMessage` (or of the most-recently-merged continuation
+  // entry). A continuation assistant only coalesces when this is NOT 'end_turn': a completed
+  // turn followed by another assistant with no user between is a genuinely separate turn
+  // (retry/continuation), not a tool continuation, so it must start a new message.
+  let lastAssistantMessageStopReason: string | null = null;
 
   // Warning accumulation
   let oversizedLineCount = 0;
@@ -288,7 +299,70 @@ export async function parseClaudeJsonl(
         compaction.awaitingPostCompaction = true;
       }
 
+      // Fold a standalone user(tool_result) entry onto the preceding assistant turn
+      // instead of pushing it as its own message. Tool plumbing is not a conversational
+      // message the user reads, and counting it inflates metrics.messageCount → the mobile
+      // unread badge (transcript-watcher.service.ts getLastKnownMessageCount). This mirrors
+      // the Codex flushPendingToolResults fold (codex-jsonl.parser.ts) and matches
+      // OpenCode/Gemini, which already fold tool results into the owning turn. A user entry
+      // with REAL text is left alone. The count is reduced by NOT pushing — so the hard
+      // invariant messageCount === messages.length is preserved (never decoupled).
+      if (
+        isToolResultOnlyMessage(unified) &&
+        lastAssistantMessage &&
+        lastAssistantMessage.isSidechain === unified.isSidechain &&
+        lastAssistantMessageStopReason !== 'end_turn'
+      ) {
+        lastAssistantMessage.content.push(...unified.content);
+        lastAssistantMessage.toolResults.push(...unified.toolResults);
+        // No extra token accounting: visibleContextTokens already counted unified.content
+        // above (non-sidechain); the fold only MOVES those blocks onto the assistant.
+        continue;
+      }
+      // The end_turn guard above mirrors the continuation fold (over-merge boundary): a
+      // tool_result that follows a COMPLETED turn (stop_reason === 'end_turn') cannot belong
+      // to it — well-formed transcripts only emit tool_results after a 'tool_use' assistant —
+      // so it is left to push as its own message rather than glued onto an unrelated turn.
+
+      // Coalesce a continuation assistant entry — the assistant turn that RESUMES after a
+      // tool_result — onto the preceding assistant message instead of counting it as a new
+      // turn. Claude emits N+1 assistant entries for an N-round tool turn; folding the
+      // continuations collapses them into ONE assistant message so messageCount tracks
+      // conversational turns, not tool rounds (cross-provider parity). Mirrors the tool_result
+      // fold above; messageCount === messages.length stays intact (reduced by NOT pushing).
+      // Over-merge guards: a preceding stop_reason === 'end_turn' is a completed turn (a
+      // retry/new continuation, NOT a tool continuation) and starts a new message; a sidechain
+      // mismatch — and a real user / compact-summary between, which both null out
+      // lastAssistantMessage — also break the chain. Usage MUST be summed or the per-chunk
+      // token metrics (chunk-builder.ts computeChunkMetrics) undercount the merged turn.
+      if (
+        entry.type === 'assistant' &&
+        lastAssistantMessage &&
+        lastAssistantMessage.isSidechain === unified.isSidechain &&
+        lastAssistantMessageStopReason !== 'end_turn'
+      ) {
+        lastAssistantMessage.content.push(...unified.content);
+        lastAssistantMessage.toolCalls.push(...unified.toolCalls);
+        lastAssistantMessage.toolResults.push(...unified.toolResults);
+        mergeUsage(lastAssistantMessage, unified.usage);
+        lastAssistantMessageStopReason = msg.stop_reason ?? null;
+        // Keep the persisted signal in sync with the merged turn (read at the cache boundary).
+        lastAssistantMessage.stopReason = lastAssistantMessageStopReason;
+        continue;
+      }
+
       messages.push(unified);
+
+      // Track the fold target + its stop_reason. A real user / compact-summary message (or a
+      // tool_result with no preceding assistant, pushed as a fallback above) ends the
+      // assistant turn, so a later continuation / tool_result must not fold across it.
+      if (entry.type === 'assistant') {
+        lastAssistantMessage = unified;
+        lastAssistantMessageStopReason = msg.stop_reason ?? null;
+      } else {
+        lastAssistantMessage = null;
+        lastAssistantMessageStopReason = null;
+      }
 
       if (entry.type === 'user' && entry.isCompactSummary && !entry.isSidechain) {
         // Reset visible context to compact summary tokens only.
@@ -379,6 +453,31 @@ export async function parseClaudeJsonl(
 }
 
 // ---------------------------------------------------------------------------
+// Usage merge
+// ---------------------------------------------------------------------------
+
+/**
+ * Sum a coalesced continuation entry's token usage onto the assistant message it folds
+ * into. Without this, chunk-builder.ts computeChunkMetrics (which sums per-message usage)
+ * would undercount the merged turn — only the first entry's usage would survive on the
+ * single coalesced message. Session-level totals accumulate independently per entry, so
+ * they are unaffected.
+ */
+function mergeUsage(target: UnifiedMessage, addition: TokenUsage | undefined): void {
+  if (!addition) return;
+  if (!target.usage) {
+    target.usage = { ...addition };
+    return;
+  }
+  target.usage = {
+    input: target.usage.input + addition.input,
+    output: target.usage.output + addition.output,
+    cacheRead: target.usage.cacheRead + addition.cacheRead,
+    cacheCreation: target.usage.cacheCreation + addition.cacheCreation,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Message builder
 // ---------------------------------------------------------------------------
 
@@ -446,6 +545,10 @@ function buildUnifiedMessage(
     isSidechain,
     isCompactSummary: isCompactSummary || undefined,
     sourceToolUseId: entry.sourceToolUseID || undefined,
+    // Persist the turn-completion signal so the incremental cache-boundary fold can apply the
+    // end_turn over-merge guard (a continuation in a later slice never folds onto a completed
+    // tail). Only meaningful for assistant entries.
+    stopReason: entry.type === 'assistant' ? (msg.stop_reason ?? null) : undefined,
   };
 }
 

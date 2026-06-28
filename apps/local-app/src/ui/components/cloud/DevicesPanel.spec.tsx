@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock useCloudConnection — always connected so query is enabled
@@ -18,7 +19,11 @@ function renderWithClient(ui: React.ReactElement) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 const TWO_DEVICES = {
@@ -96,6 +101,14 @@ describe('DevicesPanel', () => {
     mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ devices: [] }) });
     renderWithClient(<DevicesPanel />);
     await waitFor(() => expect(screen.getByText(/No mobile devices yet/)).toBeInTheDocument());
+  });
+
+  it('empty state cross-links to the account download section', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ devices: [] }) });
+    renderWithClient(<DevicesPanel />);
+    await waitFor(() => expect(screen.getByText(/No mobile devices yet/)).toBeInTheDocument());
+    const link = screen.getByRole('link', { name: /get the devchain mobile app/i });
+    expect(link).toHaveAttribute('href', '/cloud?section=account');
   });
 
   it('renders list on 200 with devices', async () => {

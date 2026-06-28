@@ -96,10 +96,18 @@ describe('env.config', () => {
     expect(config.RUNTIME_TOKEN).toBe('runtime-token-123');
   });
 
-  it('disables Cloud UI features by default', () => {
+  it('enables Cloud UI features by default', () => {
     const config = getEnvConfig();
 
-    expect(config.DEVCHAIN_CLOUD_UI_ENABLED).toBe(false);
+    expect(config.DEVCHAIN_CLOUD_UI_ENABLED).toBe(true);
+  });
+
+  it('enables Cloud UI features when DEVCHAIN_CLOUD_UI_ENABLED is empty (treated as unset)', () => {
+    process.env.DEVCHAIN_CLOUD_UI_ENABLED = '';
+
+    const config = getEnvConfig();
+
+    expect(config.DEVCHAIN_CLOUD_UI_ENABLED).toBe(true);
   });
 
   it.each(['1', 'true', 'TRUE', 'yes', 'on'])(
@@ -110,6 +118,17 @@ describe('env.config', () => {
       const config = getEnvConfig();
 
       expect(config.DEVCHAIN_CLOUD_UI_ENABLED).toBe(true);
+    },
+  );
+
+  it.each(['0', 'false', 'FALSE', 'no', 'off'])(
+    'disables Cloud UI features when DEVCHAIN_CLOUD_UI_ENABLED=%s',
+    (value) => {
+      process.env.DEVCHAIN_CLOUD_UI_ENABLED = value;
+
+      const config = getEnvConfig();
+
+      expect(config.DEVCHAIN_CLOUD_UI_ENABLED).toBe(false);
     },
   );
 

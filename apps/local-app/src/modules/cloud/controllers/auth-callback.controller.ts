@@ -7,10 +7,13 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
-  InternalServerErrorException,
 } from '@nestjs/common';
 import { CloudSessionManagerService } from '../services/cloud-session-manager.service';
 import { StoreCloudTokensSchema } from '../dtos/cloud-tokens.dto';
+import { createLogger } from '../../../common/logging/logger';
+import { mapStoreTokensError } from './store-tokens-error';
+
+const logger = createLogger('CloudAuthCallback');
 
 @Controller('api/auth/cloud')
 export class AuthCallbackController {
@@ -31,10 +34,8 @@ export class AuthCallbackController {
       );
       return { userId: tokens.userId, email: tokens.email };
     } catch (error) {
-      if (error instanceof Error && error.message.includes('JWT')) {
-        throw new BadRequestException('Invalid access token');
-      }
-      throw new InternalServerErrorException('Failed to store cloud tokens');
+      logger.error({ err: error }, 'storeTokens failed');
+      throw mapStoreTokensError(error);
     }
   }
 

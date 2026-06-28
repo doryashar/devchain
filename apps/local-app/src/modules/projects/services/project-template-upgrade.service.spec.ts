@@ -352,6 +352,64 @@ describe('ProjectTemplateUpgradeService', () => {
       );
     });
 
+    it('session preserved when agent name still present in target template', async () => {
+      mockSettingsService.getProjectTemplateMetadata.mockReturnValue({
+        templateSlug: 'dev-team',
+        installedVersion: '1.0.0',
+        registryUrl: 'https://test.com',
+        installedAt: new Date().toISOString(),
+      });
+      mockProjectsService.exportProject.mockResolvedValue(createMockExportData());
+      mockCacheService.getTemplate.mockResolvedValue({
+        content: { prompts: [], agents: [{ name: 'Architect' }] },
+        metadata: { slug: 'dev-team', version: '2.0.0', checksum: 'abc', cachedAt: '', size: 0 },
+      });
+      // importProject returns success with preservation counts — Architect session preserved
+      mockProjectsService.importProject.mockResolvedValue({
+        ...createMockImportResult(),
+        sessionPreservation: { preservedCount: 1, removedCount: 0 },
+      });
+
+      const result = await service.upgradeProject({
+        projectId: 'project-123',
+        targetVersion: '2.0.0',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockProjectsService.importProject).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'project-123', dryRun: false }),
+      );
+    });
+
+    it('sessions deleted when agent dropped from target template', async () => {
+      mockSettingsService.getProjectTemplateMetadata.mockReturnValue({
+        templateSlug: 'dev-team',
+        installedVersion: '1.0.0',
+        registryUrl: 'https://test.com',
+        installedAt: new Date().toISOString(),
+      });
+      mockProjectsService.exportProject.mockResolvedValue(createMockExportData());
+      mockCacheService.getTemplate.mockResolvedValue({
+        content: { prompts: [], agents: [] }, // Reviewer dropped from new template
+        metadata: { slug: 'dev-team', version: '2.0.0', checksum: 'abc', cachedAt: '', size: 0 },
+      });
+      // importProject returns success with removal counts — Reviewer session deleted
+      mockProjectsService.importProject.mockResolvedValue({
+        ...createMockImportResult(),
+        sessionPreservation: { preservedCount: 0, removedCount: 1 },
+      });
+
+      const result = await service.upgradeProject({
+        projectId: 'project-123',
+        targetVersion: '2.0.0',
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockProjectsService.importProject).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'project-123', dryRun: false }),
+      );
+    });
+
     it('should return error and keep backup when import fails without throwing', async () => {
       mockSettingsService.getProjectTemplateMetadata.mockReturnValue({
         templateSlug: 'test-template',

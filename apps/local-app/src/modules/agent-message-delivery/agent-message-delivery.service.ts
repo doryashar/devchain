@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MessageEnqueueService } from '../sessions/services/message-enqueue.service';
 import { SessionLauncherFacade } from '../sessions/services/session-launcher-facade.service';
+import { ActiveSessionLookup } from '../sessions/services/active-session-lookup.service';
 import { GuestDeliveryService } from '../terminal/services/guest-delivery.service';
 import { DeliveryRecipientResolver } from './ports/delivery-recipient-resolver';
 import { DeliveryFormatter } from './ports/delivery-formatter';
@@ -22,6 +23,7 @@ export class AgentMessageDeliveryService {
     private readonly formatter: DeliveryFormatter,
     private readonly messageEnqueue: MessageEnqueueService,
     private readonly guestDelivery: GuestDeliveryService,
+    private readonly activeSessionLookup: ActiveSessionLookup,
   ) {}
 
   formatMessage(message: DeliveryMessage): string {
@@ -59,7 +61,17 @@ export class AgentMessageDeliveryService {
     policy: DeliveryPolicy,
   ): Promise<RecipientResult> {
     try {
-      await this.sessionLauncher.ensureActiveSession(agentId, message.projectId);
+      if (policy.requireActiveSession) {
+        // Deliver-only: validate an active session exists but never launch one.
+        // Eliminates the pre-check→deliver race where ensureActiveSession would
+        // otherwise auto-launch behind the caller's back.
+        const active = await this.activeSessionLookup.getActiveSession(agentId, message.projectId);
+        if (!active) {
+          return { agentId, status: 'failed', error: 'SESSION_NOT_RUNNING' };
+        }
+      } else {
+        await this.sessionLauncher.ensureActiveSession(agentId, message.projectId);
+      }
       const formattedText = this.formatter.format(message);
       const [poolResult] = await this.messageEnqueue.enqueue([
         {
@@ -67,6 +79,8 @@ export class AgentMessageDeliveryService {
           text: formattedText,
           source: message.source,
           submitKeys: policy.submitKeys ? [...policy.submitKeys] : ['Enter'],
+          preKeys: policy.preKeys ? [...policy.preKeys] : undefined,
+          preDelayMs: policy.preDelayMs,
           senderAgentId: message.senderAgentId,
           immediate: policy.immediate,
           projectId: message.projectId,

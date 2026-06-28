@@ -14,6 +14,8 @@ interface QrDisplayPanelProps {
   crossCheckCode: string | null;
   expiresAt: Date | null;
   error: string | null;
+  /** Safety number for the just-paired device (Task:8) — shown on success to compare. */
+  safetyNumber?: string | null;
   onCancel: () => void;
   onRetry: () => void;
 }
@@ -24,6 +26,7 @@ export function QrDisplayPanel({
   crossCheckCode,
   expiresAt,
   error,
+  safetyNumber,
   onCancel,
   onRetry,
 }: QrDisplayPanelProps) {
@@ -84,8 +87,17 @@ export function QrDisplayPanel({
 
   if (status === 'success') {
     return (
-      <div className="text-center py-8 space-y-2" data-testid="qr-success">
+      <div className="text-center py-8 space-y-3" data-testid="qr-success">
         <p className="text-sm font-medium text-green-600">Connected!</p>
+        {safetyNumber ? (
+          <div className="space-y-1" data-testid="qr-safety-number">
+            <p className="text-xs text-muted-foreground">Safety number</p>
+            <code className="block text-sm font-mono tracking-wide font-semibold leading-6">
+              {safetyNumber}
+            </code>
+            <p className="text-xs text-muted-foreground">should match the number on your phone</p>
+          </div>
+        ) : null}
       </div>
     );
   }

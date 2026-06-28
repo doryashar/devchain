@@ -50,11 +50,6 @@ describe('CloudAuthForm', () => {
   }
 
   describe('idle mode', () => {
-    it('renders the channel-neutral subtitle', () => {
-      renderForm();
-      expect(screen.getByText('Sign in to enable cloud features')).toBeInTheDocument();
-    });
-
     it('renders three auth options: GitHub, magic link, QR code', () => {
       renderForm();
       expect(screen.getByRole('button', { name: /sign in with github/i })).toBeInTheDocument();

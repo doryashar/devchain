@@ -8,6 +8,7 @@
 import { AgentMessageDeliveryService } from './agent-message-delivery.service';
 import type { MessageEnqueueService } from '../sessions/services/message-enqueue.service';
 import type { SessionLauncherFacade } from '../sessions/services/session-launcher-facade.service';
+import type { ActiveSessionLookup } from '../sessions/services/active-session-lookup.service';
 import type { GuestDeliveryService } from '../terminal/services/guest-delivery.service';
 import type { DeliveryRecipientResolver } from './ports/delivery-recipient-resolver';
 import type { DeliveryFormatter } from './ports/delivery-formatter';
@@ -39,15 +40,37 @@ function buildService() {
   const guestDelivery: jest.Mocked<Pick<GuestDeliveryService, 'deliverToGuest'>> = {
     deliverToGuest: jest.fn().mockResolvedValue({ delivered: true }),
   };
+  const activeSessionLookup: jest.Mocked<Pick<ActiveSessionLookup, 'getActiveSession'>> = {
+    getActiveSession: jest.fn().mockResolvedValue({
+      sessionId: 'session-1',
+      agentId: 'agent-1',
+      projectId: 'project-1',
+      status: 'running',
+      tmuxSessionId: 'tmux-1',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      lastActivityAt: null,
+      activityState: null,
+      name: null,
+    }),
+  };
   const service = new AgentMessageDeliveryService(
     resolver,
     launcher as SessionLauncherFacade,
     formatter,
     messageEnqueue as MessageEnqueueService,
     guestDelivery as GuestDeliveryService,
+    activeSessionLookup as ActiveSessionLookup,
   );
 
-  return { service, resolver, launcher, formatter, messageEnqueue, guestDelivery };
+  return {
+    service,
+    resolver,
+    launcher,
+    formatter,
+    messageEnqueue,
+    guestDelivery,
+    activeSessionLookup,
+  };
 }
 
 describe('AgentMessageDeliveryService', () => {
@@ -81,6 +104,73 @@ describe('AgentMessageDeliveryService', () => {
       ]);
       expect(outcome.status).toBe('queued');
       expect(outcome.results).toHaveLength(1);
+    });
+
+    describe('requireActiveSession policy (deliver-only, no auto-launch)', () => {
+      it('delivers without launching when an active session exists', async () => {
+        const { service, launcher, activeSessionLookup, messageEnqueue } = buildService();
+
+        const outcome = await service.deliver(
+          ['agent-1'],
+          {
+            kind: 'mcp.direct',
+            body: 'hi',
+            source: 'mobile',
+            projectId: 'project-1',
+            senderName: 'U',
+          },
+          { requireActiveSession: true, immediate: true },
+        );
+
+        expect(activeSessionLookup.getActiveSession).toHaveBeenCalledWith('agent-1', 'project-1');
+        expect(launcher.ensureActiveSession).not.toHaveBeenCalled();
+        expect(messageEnqueue.enqueue).toHaveBeenCalledTimes(1);
+        expect(outcome.status).toBe('queued');
+      });
+
+      it('fails with SESSION_NOT_RUNNING and never launches or enqueues when no active session', async () => {
+        const { service, launcher, activeSessionLookup, messageEnqueue } = buildService();
+        activeSessionLookup.getActiveSession.mockResolvedValue(null);
+
+        const outcome = await service.deliver(
+          ['agent-1'],
+          {
+            kind: 'mcp.direct',
+            body: 'hi',
+            source: 'mobile',
+            projectId: 'project-1',
+            senderName: 'U',
+          },
+          { requireActiveSession: true },
+        );
+
+        expect(outcome.status).toBe('failed');
+        expect(outcome.results[0]).toMatchObject({
+          status: 'failed',
+          error: 'SESSION_NOT_RUNNING',
+        });
+        expect(launcher.ensureActiveSession).not.toHaveBeenCalled();
+        expect(messageEnqueue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('keeps auto-launch behavior for existing callers when the policy is absent', async () => {
+        const { service, launcher, activeSessionLookup } = buildService();
+
+        await service.deliver(
+          ['agent-1'],
+          {
+            kind: 'mcp.direct',
+            body: 'hi',
+            source: 'test',
+            projectId: 'project-1',
+            senderName: 'U',
+          },
+          {},
+        );
+
+        expect(launcher.ensureActiveSession).toHaveBeenCalledWith('agent-1', 'project-1');
+        expect(activeSessionLookup.getActiveSession).not.toHaveBeenCalled();
+      });
     });
 
     it('returns delivered status for empty recipient list', async () => {

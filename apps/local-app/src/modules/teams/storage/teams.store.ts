@@ -194,6 +194,44 @@ export class TeamsStore {
     };
   }
 
+  /**
+   * Batched read for mobile team grouping: returns every team in a project
+   * (in `listTeams` order — no ORDER BY, matching the web sidebar) together with
+   * its member agent IDs, resolved via a SINGLE `teamMembers` query keyed by the
+   * project's teamIds (`inArray(teamMembers.teamId, teamIds)`) instead of a
+   * per-team `getTeam()` (avoids N+1).
+   *
+   * Member order within a team relies on SQLite's natural rowid/insertion order
+   * — the SAME order `getTeam` returns (both scan `teamMembers` with no ORDER BY
+   * on the teamId predicate), so this stays consistent with the canonical
+   * member ordering. Empty teams are included (memberAgentIds: []); the caller
+   * decides whether to omit them.
+   */
+  async listTeamsWithMembers(
+    projectId: string,
+  ): Promise<Array<{ team: Team; memberAgentIds: string[] }>> {
+    const teamRows = await this.db.select().from(teams).where(eq(teams.projectId, projectId));
+    const teamIds = teamRows.map((row) => row.id);
+    if (teamIds.length === 0) return [];
+
+    const memberRows = await this.db
+      .select()
+      .from(teamMembers)
+      .where(inArray(teamMembers.teamId, teamIds));
+
+    const membersByTeam = new Map<string, string[]>();
+    for (const row of memberRows) {
+      const list = membersByTeam.get(row.teamId);
+      if (list) list.push(row.agentId);
+      else membersByTeam.set(row.teamId, [row.agentId]);
+    }
+
+    return teamRows.map((row) => ({
+      team: this.toTeam(row),
+      memberAgentIds: membersByTeam.get(row.id) ?? [],
+    }));
+  }
+
   async findTeamByExactName(projectId: string, name: string): Promise<Team | null> {
     const [row] = await this.db
       .select()
@@ -355,6 +393,31 @@ export class TeamsStore {
       .from(teamProfiles)
       .where(eq(teamProfiles.teamId, teamId));
     return rows.map((r) => r.profileId);
+  }
+
+  /**
+   * Profile ids in `projectId` that are NOT linked to ANY of the project's teams — the
+   * "standalone" set the mobile create-agent modal shows when no team is selected. Single
+   * query, mirroring the `NOT EXISTS` pattern in {@link listConfigsForTeam}. The subquery is
+   * scoped to teams in the same project so a (theoretical) cross-project link never hides a
+   * profile from its own project's standalone list.
+   */
+  async listProfilesNotLinkedToAnyTeam(projectId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ id: agentProfiles.id })
+      .from(agentProfiles)
+      .where(
+        and(
+          eq(agentProfiles.projectId, projectId),
+          sql`NOT EXISTS (
+            SELECT 1 FROM team_profiles tp
+            INNER JOIN teams t ON t.id = tp.team_id
+            WHERE tp.profile_id = ${agentProfiles.id}
+              AND t.project_id = ${projectId}
+          )`,
+        ),
+      );
+    return rows.map((r) => r.id);
   }
 
   async listConfigsForTeam(teamId: string): Promise<

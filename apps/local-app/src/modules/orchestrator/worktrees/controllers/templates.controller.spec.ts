@@ -80,7 +80,7 @@ describe('OrchestratorTemplatesController', () => {
     expect(result.templates).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ slug: '3-agents-dev' }),
-        expect.objectContaining({ slug: '5-agents-dev' }),
+        expect.objectContaining({ slug: 'teams-dev' }),
       ]),
     );
     expect(result.total).toBeGreaterThanOrEqual(2);

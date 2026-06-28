@@ -249,16 +249,24 @@ describe('ChatTerminal', () => {
       });
     });
 
-    // Unified seed_ansi: seed content IS written to xterm before resize jiggle.
+    // Unified seed_ansi: seed content is written directly to xterm.
     await waitFor(() => {
       expect(history.innerHTML).toBe('AB');
     });
 
-    // Verify that hasHistory is enabled for scroll-up history loading
+    // Verify that hasHistory is resolved (and, with the server's hasHistory:true, enabled)
     const hasHistoryCalls = (termLog as jest.Mock).mock.calls.filter(
-      (c) => c[0] === 'seed_hasHistory_enabled',
+      (c) => c[0] === 'seed_hasHistory_resolved' && c[1]?.hasHistory === true,
     );
     expect(hasHistoryCalls.length).toBeGreaterThan(0);
+
+    // Post-seed (onSeedReady), the client requests a server-gated viewport-mode restore so a
+    // seeded (re)connect into a full-screen TUI re-emits alt-screen + mouse modes.
+    await waitFor(() => {
+      expect(socket.emit).toHaveBeenCalledWith('terminal:restore_viewport_modes', {
+        sessionId: 'chat-session',
+      });
+    });
   });
 
   it('aborts incomplete seed after timeout and flushes pending writes', async () => {

@@ -1,13 +1,16 @@
 import type { ListOptions, ListResult } from '../../interfaces/storage.interface';
 import type {
   CreateProvider,
+  EnvScopesMap,
   Provider,
   ProviderMcpMetadata,
   UpdateProvider,
   UpdateProviderMcpMetadata,
 } from '../../models/domain.models';
+import { eq } from 'drizzle-orm';
 import { NotFoundError } from '../../../../common/errors/error-types';
 import { createLogger } from '../../../../common/logging/logger';
+import { providers as providersTable } from '../../db/schema';
 import { normalizeEnvForStorage, parseProviderEnv } from '../helpers/storage-helpers';
 import { BaseStorageDelegate, type StorageDelegateContext } from './base-storage.delegate';
 
@@ -174,5 +177,148 @@ export class ProviderStorageDelegate extends BaseStorageDelegate {
       update.mcpRegisteredAt = metadata.mcpRegisteredAt ?? null;
     }
     return this.dependencies.updateProvider(id, update);
+  }
+
+  listEnvScopesByProviderIds(providerIds: string[]): Map<string, EnvScopesMap> {
+    const result = new Map<string, EnvScopesMap>();
+    if (providerIds.length === 0) return result;
+
+    const placeholders = providerIds.map(() => '?').join(', ');
+    const rows = this.rawClient
+      .prepare(
+        `SELECT provider_id, env_key, project_id FROM provider_env_scopes WHERE provider_id IN (${placeholders})`,
+      )
+      .all(...providerIds) as Array<{ provider_id: string; env_key: string; project_id: string }>;
+
+    for (const row of rows) {
+      let providerScopes = result.get(row.provider_id);
+      if (!providerScopes) {
+        providerScopes = {};
+        result.set(row.provider_id, providerScopes);
+      }
+      if (!providerScopes[row.env_key]) {
+        providerScopes[row.env_key] = [];
+      }
+      providerScopes[row.env_key].push(row.project_id);
+    }
+    return result;
+  }
+
+  listEnvScopes(providerId: string): EnvScopesMap {
+    const rows = this.rawClient
+      .prepare('SELECT env_key, project_id FROM provider_env_scopes WHERE provider_id = ?')
+      .all(providerId) as Array<{ env_key: string; project_id: string }>;
+
+    const result: EnvScopesMap = {};
+    for (const row of rows) {
+      if (!result[row.env_key]) {
+        result[row.env_key] = [];
+      }
+      result[row.env_key].push(row.project_id);
+    }
+    return result;
+  }
+
+  getProviderEnvForProject(providerId: string, projectId: string): Record<string, string> | null {
+    const providerRow = this.rawClient
+      .prepare('SELECT env FROM providers WHERE id = ?')
+      .get(providerId) as { env: string | null } | undefined;
+
+    if (!providerRow) {
+      throw new NotFoundError('Provider', providerId);
+    }
+
+    const allEnv = parseProviderEnv(providerRow.env, providerId);
+    if (!allEnv || Object.keys(allEnv).length === 0) {
+      return null;
+    }
+
+    const scopeRows = this.rawClient
+      .prepare('SELECT env_key, project_id FROM provider_env_scopes WHERE provider_id = ?')
+      .all(providerId) as Array<{ env_key: string; project_id: string }>;
+
+    const scopeMap: Record<string, Set<string>> = {};
+    for (const row of scopeRows) {
+      if (!scopeMap[row.env_key]) {
+        scopeMap[row.env_key] = new Set();
+      }
+      scopeMap[row.env_key].add(row.project_id);
+    }
+
+    const filtered: Record<string, string> = {};
+    for (const [key, value] of Object.entries(allEnv)) {
+      const scopes = scopeMap[key];
+      if (!scopes || scopes.has(projectId)) {
+        filtered[key] = value;
+      }
+    }
+
+    return Object.keys(filtered).length > 0 ? filtered : null;
+  }
+
+  updateProviderWithScopes(
+    id: string,
+    data: UpdateProvider,
+    envScopes: EnvScopesMap | undefined,
+    currentEnvKeys: string[],
+  ): Provider {
+    return this.txRunner.runImmediate(() => {
+      const now = new Date().toISOString();
+
+      const updateData: Record<string, unknown> = { updatedAt: now };
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.binPath !== undefined) updateData.binPath = data.binPath;
+      if (data.mcpConfigured !== undefined) updateData.mcpConfigured = data.mcpConfigured;
+      if (data.mcpEndpoint !== undefined) updateData.mcpEndpoint = data.mcpEndpoint;
+      if (data.mcpRegisteredAt !== undefined) updateData.mcpRegisteredAt = data.mcpRegisteredAt;
+      if (data.autoCompactThreshold !== undefined)
+        updateData.autoCompactThreshold = data.autoCompactThreshold;
+      if (data.autoCompactThreshold1m !== undefined)
+        updateData.autoCompactThreshold1m = data.autoCompactThreshold1m;
+      if (data.oneMillionContextEnabled !== undefined)
+        updateData.oneMillionContextEnabled = data.oneMillionContextEnabled;
+      if (data.env !== undefined) updateData.env = normalizeEnvForStorage(data.env);
+
+      this.db.update(providersTable).set(updateData).where(eq(providersTable.id, id)).run();
+
+      if (envScopes !== undefined) {
+        this.rawClient.prepare('DELETE FROM provider_env_scopes WHERE provider_id = ?').run(id);
+
+        const insert = this.rawClient.prepare(
+          'INSERT INTO provider_env_scopes (provider_id, env_key, project_id, created_at) VALUES (?, ?, ?, ?)',
+        );
+        for (const [envKey, projectIds] of Object.entries(envScopes)) {
+          if (!currentEnvKeys.includes(envKey)) continue;
+          for (const projectId of projectIds) {
+            insert.run(id, envKey, projectId, now);
+          }
+        }
+      } else {
+        if (currentEnvKeys.length > 0) {
+          const placeholders = currentEnvKeys.map(() => '?').join(', ');
+          this.rawClient
+            .prepare(
+              `DELETE FROM provider_env_scopes WHERE provider_id = ? AND env_key NOT IN (${placeholders})`,
+            )
+            .run(id, ...currentEnvKeys);
+        } else {
+          this.rawClient.prepare('DELETE FROM provider_env_scopes WHERE provider_id = ?').run(id);
+        }
+      }
+
+      const row = this.rawClient.prepare('SELECT * FROM providers WHERE id = ?').get(id) as
+        | Record<string, unknown>
+        | undefined;
+
+      if (!row) {
+        throw new NotFoundError('Provider', id);
+      }
+
+      logger.info({ providerId: id }, 'Updated provider with scopes');
+      return {
+        ...row,
+        env: parseProviderEnv(row.env as string | null, id),
+      } as Provider;
+    });
   }
 }

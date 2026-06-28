@@ -1,6 +1,23 @@
 import { TunnelHandlerService } from './tunnel-handler.service';
+import { MobileChatRpcService } from './mobile-chat-rpc.service';
+import { MobileBoardRpcService } from './mobile-board-rpc.service';
+import { ViewportStreamerService } from './viewport-streamer.service';
+import {
+  AppError,
+  ConflictError,
+  NotFoundError,
+  OptimisticLockError,
+  ValidationError,
+} from '../../../common/errors/error-types';
 
 describe('TunnelHandlerService', () => {
+  // board.* read handlers never touch the seam services; bare stubs suffice for
+  // those tests. The board.* mutation tests inject a purpose-built mobileBoard.
+  const mobileChat = {} as MobileChatRpcService;
+  const mobileBoard = {} as MobileBoardRpcService;
+  // Viewport lease control is not exercised by these board/chat tests; a bare stub
+  // suffices. The viewport RPC delegation is covered in its own describe block below.
+  const mobileViewport = {} as ViewportStreamerService;
   const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
   const STATUS_ID = '22222222-2222-4222-8222-222222222222';
   const STATUS_ID_2 = '12121212-1212-4212-8212-121212121212';
@@ -30,7 +47,7 @@ describe('TunnelHandlerService', () => {
       }),
       listEpicsByStatus: jest.fn(),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({ jsonrpc: '2.0', id: '1', method: 'board.listProjects', params: {} }),
@@ -93,7 +110,7 @@ describe('TunnelHandlerService', () => {
         total: 1,
       }),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -130,7 +147,7 @@ describe('TunnelHandlerService', () => {
         projectId: PROJECT_ID,
       }),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -165,7 +182,7 @@ describe('TunnelHandlerService', () => {
         total: 1,
       }),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -234,7 +251,7 @@ describe('TunnelHandlerService', () => {
       ),
       countSubEpicsByStatus: jest.fn(),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -318,7 +335,7 @@ describe('TunnelHandlerService', () => {
           new Map([[PARENT_ID, [{ id: 'child-1', parentId: PARENT_ID, statusId: STATUS_ID }]]]),
         ),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -380,7 +397,7 @@ describe('TunnelHandlerService', () => {
           new Map([[PARENT_ID, [{ id: CHILD_ID, parentId: PARENT_ID, statusId: STATUS_ID }]]]),
         ),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     const response = await service.handle({
       jsonrpc: '2.0',
@@ -472,7 +489,7 @@ describe('TunnelHandlerService', () => {
         '00000000-0000-4000-8000-000000000000': 0,
       }),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -543,7 +560,7 @@ describe('TunnelHandlerService', () => {
         [STATUS_ID_2]: 4,
       }),
     };
-    const service = new TunnelHandlerService(storage);
+    const service = new TunnelHandlerService(storage, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -574,7 +591,7 @@ describe('TunnelHandlerService', () => {
   });
 
   it('returns invalid params for malformed board.listParentChildren payload', async () => {
-    const service = new TunnelHandlerService({});
+    const service = new TunnelHandlerService({}, mobileChat, mobileBoard, mobileViewport);
 
     await expect(
       service.handle({
@@ -585,6 +602,753 @@ describe('TunnelHandlerService', () => {
       }),
     ).resolves.toMatchObject({
       error: { code: -32602, message: 'Invalid params' },
+    });
+  });
+
+  it('delegates chat.listAgents to MobileChatRpcService and returns its result', async () => {
+    const listAgents = jest
+      .fn()
+      .mockResolvedValue([
+        { id: AGENT_ID, name: 'Coder', type: 'agent', online: true, sessionId: 'sess-1' },
+      ]);
+    const chat = { listAgents } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '11',
+        method: 'chat.listAgents',
+        params: { projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({
+      result: [{ id: AGENT_ID, name: 'Coder', type: 'agent', online: true, sessionId: 'sess-1' }],
+    });
+
+    expect(listAgents).toHaveBeenCalledWith({ projectId: PROJECT_ID });
+  });
+
+  it('rejects chat.listAgents with a non-uuid projectId before delegating', async () => {
+    const listAgents = jest.fn();
+    const chat = { listAgents } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '12',
+        method: 'chat.listAgents',
+        params: { projectId: 'not-a-uuid' },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32602, message: 'Invalid params' },
+    });
+    expect(listAgents).not.toHaveBeenCalled();
+  });
+
+  it('maps an AppError thrown by a chat.* handler to error.data.code', async () => {
+    const chat = {
+      listAgents: jest.fn().mockRejectedValue(new NotFoundError('Project', PROJECT_ID)),
+    } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '13',
+        method: 'chat.listAgents',
+        params: { projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32603, data: { code: 'not_found' } },
+    });
+  });
+
+  it('delegates chat.getTranscriptSummary to MobileChatRpcService', async () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+    const getTranscriptSummary = jest
+      .fn()
+      .mockResolvedValue({ sessionId: SESSION_ID, cursor: 'CUR' });
+    const chat = { getTranscriptSummary } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '14',
+        method: 'chat.getTranscriptSummary',
+        params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ result: { sessionId: SESSION_ID, cursor: 'CUR' } });
+
+    expect(getTranscriptSummary).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      projectId: PROJECT_ID,
+    });
+  });
+
+  it('rejects chat.getTranscriptChunks when limit exceeds 100 before delegating', async () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+    const getTranscriptChunks = jest.fn();
+    const chat = { getTranscriptChunks } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '15',
+        method: 'chat.getTranscriptChunks',
+        params: { sessionId: SESSION_ID, projectId: PROJECT_ID, limit: 500 },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(getTranscriptChunks).not.toHaveBeenCalled();
+  });
+
+  it('delegates chat.sendMessage to MobileChatRpcService', async () => {
+    const sendMessage = jest.fn().mockResolvedValue({ status: 'queued' });
+    const chat = { sendMessage } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '16',
+        method: 'chat.sendMessage',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID, text: 'hello' },
+      }),
+    ).resolves.toMatchObject({ result: { status: 'queued' } });
+
+    expect(sendMessage).toHaveBeenCalledWith({
+      agentId: AGENT_ID,
+      projectId: PROJECT_ID,
+      text: 'hello',
+    });
+  });
+
+  it('rejects chat.sendMessage with empty/whitespace text before delegating', async () => {
+    const sendMessage = jest.fn();
+    const chat = { sendMessage } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '17',
+        method: 'chat.sendMessage',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID, text: '   ' },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('maps a SESSION_NOT_RUNNING AppError from chat.sendMessage to error.data.code', async () => {
+    const sendMessage = jest
+      .fn()
+      .mockRejectedValue(new AppError('Launch the agent first.', 'SESSION_NOT_RUNNING', 409));
+    const chat = { sendMessage } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '18',
+        method: 'chat.sendMessage',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID, text: 'hi' },
+      }),
+    ).resolves.toMatchObject({
+      error: { code: -32603, data: { code: 'SESSION_NOT_RUNNING' } },
+    });
+  });
+
+  it('delegates chat.launchAgent and returns the operation handle', async () => {
+    const launchAgent = jest.fn().mockResolvedValue({ operationId: 'op-1', status: 'launching' });
+    const chat = { launchAgent } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '19',
+        method: 'chat.launchAgent',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ result: { operationId: 'op-1', status: 'launching' } });
+    expect(launchAgent).toHaveBeenCalledWith({ agentId: AGENT_ID, projectId: PROJECT_ID });
+  });
+
+  it('maps a synchronous ConflictError from a lifecycle RPC to error.data (code + details)', async () => {
+    const launchAgent = jest
+      .fn()
+      .mockRejectedValue(new ConflictError('already running', { code: 'SESSION_ALREADY_RUNNING' }));
+    const chat = { launchAgent } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '20',
+        method: 'chat.launchAgent',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({
+      // top-level domain code is 'conflict'; the specific reason rides in data.details.code
+      error: {
+        code: -32603,
+        data: { code: 'conflict', details: { code: 'SESSION_ALREADY_RUNNING' } },
+      },
+    });
+  });
+
+  it('rejects chat.getOperationStatus with a non-uuid operationId', async () => {
+    const getOperationStatus = jest.fn();
+    const chat = { getOperationStatus } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '21',
+        method: 'chat.getOperationStatus',
+        params: { operationId: 'nope', projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(getOperationStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects chat.getOperationStatus when projectId is missing', async () => {
+    const getOperationStatus = jest.fn();
+    const chat = { getOperationStatus } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '21b',
+        method: 'chat.getOperationStatus',
+        params: { operationId: '00000000-0000-4000-8000-000000000000' },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(getOperationStatus).not.toHaveBeenCalled();
+  });
+
+  it('delegates chat.getAgentStatus with { agentId, projectId } and passes through a null result', async () => {
+    const getAgentStatus = jest.fn().mockResolvedValue(null);
+    const chat = { getAgentStatus } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '22',
+        method: 'chat.getAgentStatus',
+        params: { agentId: AGENT_ID, projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ result: null });
+    expect(getAgentStatus).toHaveBeenCalledWith({ agentId: AGENT_ID, projectId: PROJECT_ID });
+  });
+
+  it('rejects chat.getAgentStatus when projectId is missing', async () => {
+    const getAgentStatus = jest.fn();
+    const chat = { getAgentStatus } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '22b',
+        method: 'chat.getAgentStatus',
+        params: { agentId: AGENT_ID },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(getAgentStatus).not.toHaveBeenCalled();
+  });
+
+  it('rejects chat.getAgentStatus with a non-uuid agentId', async () => {
+    const getAgentStatus = jest.fn();
+    const chat = { getAgentStatus } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '23',
+        method: 'chat.getAgentStatus',
+        params: { agentId: 'nope', projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(getAgentStatus).not.toHaveBeenCalled();
+  });
+
+  it('delegates chat.listPendingAskQuestions to MobileChatRpcService and returns its result', async () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+    const listPendingAskQuestions = jest
+      .fn()
+      .mockResolvedValue([{ toolUseId: 'toolu_1', questions: [], createdAt: 1, expiresAt: 2 }]);
+    const chat = { listPendingAskQuestions } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '24',
+        method: 'chat.listPendingAskQuestions',
+        params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({
+      result: [{ toolUseId: 'toolu_1', questions: [], createdAt: 1, expiresAt: 2 }],
+    });
+
+    expect(listPendingAskQuestions).toHaveBeenCalledWith({
+      sessionId: SESSION_ID,
+      projectId: PROJECT_ID,
+    });
+  });
+
+  it('rejects chat.listPendingAskQuestions with a non-uuid sessionId before delegating', async () => {
+    const listPendingAskQuestions = jest.fn();
+    const chat = { listPendingAskQuestions } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '25',
+        method: 'chat.listPendingAskQuestions',
+        params: { sessionId: 'not-a-uuid', projectId: PROJECT_ID },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(listPendingAskQuestions).not.toHaveBeenCalled();
+  });
+
+  it('rejects chat.listPendingAskQuestions when projectId is missing before delegating', async () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+    const listPendingAskQuestions = jest.fn();
+    const chat = { listPendingAskQuestions } as unknown as MobileChatRpcService;
+    const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+    await expect(
+      service.handle({
+        jsonrpc: '2.0',
+        id: '26',
+        method: 'chat.listPendingAskQuestions',
+        params: { sessionId: SESSION_ID },
+      }),
+    ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+    expect(listPendingAskQuestions).not.toHaveBeenCalled();
+  });
+
+  describe('board.* mutations', () => {
+    const AGENT_ID_2 = 'abababab-abab-4bab-8bab-abababababab';
+
+    it('delegates board.updateEpicAssignment to mobileBoard and returns its DTO', async () => {
+      const updateEpicAssignment = jest
+        .fn()
+        .mockResolvedValue({ id: EPIC_ID, version: 4, agentId: AGENT_ID, agentName: 'Coder' });
+      const board = { updateEpicAssignment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b1',
+          method: 'board.updateEpicAssignment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, agentId: AGENT_ID, version: 3 },
+        }),
+      ).resolves.toMatchObject({
+        result: { id: EPIC_ID, version: 4, agentName: 'Coder' },
+      });
+      expect(updateEpicAssignment).toHaveBeenCalledWith({
+        projectId: PROJECT_ID,
+        epicId: EPIC_ID,
+        agentId: AGENT_ID,
+        version: 3,
+      });
+    });
+
+    it('accepts a null agentId (unassign) on board.updateEpicAssignment', async () => {
+      const updateEpicAssignment = jest.fn().mockResolvedValue({ id: EPIC_ID, agentId: null });
+      const board = { updateEpicAssignment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b2',
+          method: 'board.updateEpicAssignment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, agentId: null, version: 0 },
+        }),
+      ).resolves.toMatchObject({ result: { agentId: null } });
+      expect(updateEpicAssignment).toHaveBeenCalled();
+    });
+
+    it('surfaces an OptimisticLockError as error.data.code === optimistic_lock_error', async () => {
+      const updateEpicAssignment = jest
+        .fn()
+        .mockRejectedValue(new OptimisticLockError('Epic', EPIC_ID));
+      const board = { updateEpicAssignment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b3',
+          method: 'board.updateEpicAssignment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, agentId: AGENT_ID, version: 1 },
+        }),
+      ).resolves.toMatchObject({
+        error: { code: -32603, data: { code: 'optimistic_lock_error' } },
+      });
+    });
+
+    it('surfaces a cross-project agent ValidationError as -32602 / validation_error', async () => {
+      const updateEpicAssignment = jest
+        .fn()
+        .mockRejectedValue(new ValidationError('Agent does not belong to project'));
+      const board = { updateEpicAssignment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b4',
+          method: 'board.updateEpicAssignment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, agentId: AGENT_ID_2, version: 3 },
+        }),
+      ).resolves.toMatchObject({
+        error: { code: -32602, data: { code: 'validation_error' } },
+      });
+    });
+
+    it('rejects board.updateEpicAssignment with a non-int version (strict schema)', async () => {
+      const updateEpicAssignment = jest.fn();
+      const board = { updateEpicAssignment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b5',
+          method: 'board.updateEpicAssignment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, agentId: AGENT_ID, version: 1.5 },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(updateEpicAssignment).not.toHaveBeenCalled();
+    });
+
+    it('rejects board.addEpicComment with empty content (strict schema)', async () => {
+      const addEpicComment = jest.fn();
+      const board = { addEpicComment } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b6',
+          method: 'board.addEpicComment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, authorName: 'User', content: '   ' },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(addEpicComment).not.toHaveBeenCalled();
+    });
+
+    it('delegates board.listEpicComments / board.addEpicComment / board.deleteEpicComment', async () => {
+      const listEpicComments = jest.fn().mockResolvedValue({ items: [], total: 0 });
+      const addEpicComment = jest.fn().mockResolvedValue({ id: 'c1' });
+      const deleteEpicComment = jest.fn().mockResolvedValue({ deleted: true });
+      const board = {
+        listEpicComments,
+        addEpicComment,
+        deleteEpicComment,
+      } as unknown as MobileBoardRpcService;
+      const service = new TunnelHandlerService({}, mobileChat, board, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b7',
+          method: 'board.listEpicComments',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID },
+        }),
+      ).resolves.toMatchObject({ result: { items: [], total: 0 } });
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b8',
+          method: 'board.addEpicComment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, authorName: 'User', content: 'hi' },
+        }),
+      ).resolves.toMatchObject({ result: { id: 'c1' } });
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'b9',
+          method: 'board.deleteEpicComment',
+          params: { projectId: PROJECT_ID, epicId: EPIC_ID, commentId: AGENT_ID },
+        }),
+      ).resolves.toMatchObject({ result: { deleted: true } });
+
+      expect(listEpicComments).toHaveBeenCalled();
+      expect(addEpicComment).toHaveBeenCalled();
+      expect(deleteEpicComment).toHaveBeenCalled();
+    });
+  });
+
+  describe('session-history chat.* RPCs', () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+
+    it('delegates chat.listSessions to MobileChatRpcService and returns the history DTO', async () => {
+      const listSessions = jest.fn().mockResolvedValue({
+        items: [{ id: SESSION_ID }],
+        nextCursor: 'N',
+        hasMore: true,
+        total: 1,
+      });
+      const chat = { listSessions } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's1',
+          method: 'chat.listSessions',
+          params: { agentId: AGENT_ID, projectId: PROJECT_ID, cursor: 'C', limit: 50 },
+        }),
+      ).resolves.toMatchObject({
+        result: { items: [{ id: SESSION_ID }], nextCursor: 'N', hasMore: true, total: 1 },
+      });
+      expect(listSessions).toHaveBeenCalledWith({
+        agentId: AGENT_ID,
+        projectId: PROJECT_ID,
+        cursor: 'C',
+        limit: 50,
+      });
+    });
+
+    it('rejects chat.listSessions with a non-uuid agentId before delegating', async () => {
+      const listSessions = jest.fn();
+      const chat = { listSessions } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's2',
+          method: 'chat.listSessions',
+          params: { agentId: 'nope', projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(listSessions).not.toHaveBeenCalled();
+    });
+
+    it('rejects chat.listSessions when limit exceeds 100 before delegating', async () => {
+      const listSessions = jest.fn();
+      const chat = { listSessions } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's3',
+          method: 'chat.listSessions',
+          params: { agentId: AGENT_ID, projectId: PROJECT_ID, limit: 500 },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(listSessions).not.toHaveBeenCalled();
+    });
+
+    it('delegates chat.deleteSessionRecord and returns { deleted }', async () => {
+      const deleteSessionRecord = jest.fn().mockResolvedValue({ deleted: true });
+      const chat = { deleteSessionRecord } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's4',
+          method: 'chat.deleteSessionRecord',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ result: { deleted: true } });
+      expect(deleteSessionRecord).toHaveBeenCalledWith({
+        sessionId: SESSION_ID,
+        projectId: PROJECT_ID,
+      });
+    });
+
+    it('maps a STATUS_RUNNING ConflictError from chat.deleteSessionRecord to error.data', async () => {
+      const deleteSessionRecord = jest
+        .fn()
+        .mockRejectedValue(
+          new ConflictError('Cannot delete a running session', { code: 'STATUS_RUNNING' }),
+        );
+      const chat = { deleteSessionRecord } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's5',
+          method: 'chat.deleteSessionRecord',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({
+        error: { code: -32603, data: { code: 'conflict', details: { code: 'STATUS_RUNNING' } } },
+      });
+    });
+
+    it('delegates chat.renameSession and accepts a null name (clear)', async () => {
+      const renameSession = jest.fn().mockResolvedValue({ id: SESSION_ID, name: null });
+      const chat = { renameSession } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's6',
+          method: 'chat.renameSession',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID, name: null },
+        }),
+      ).resolves.toMatchObject({ result: { id: SESSION_ID, name: null } });
+      expect(renameSession).toHaveBeenCalledWith({
+        sessionId: SESSION_ID,
+        projectId: PROJECT_ID,
+        name: null,
+      });
+    });
+
+    it('rejects chat.renameSession when name exceeds 120 chars before delegating', async () => {
+      const renameSession = jest.fn();
+      const chat = { renameSession } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's7',
+          method: 'chat.renameSession',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID, name: 'x'.repeat(121) },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(renameSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects chat.renameSession when name is omitted (nullable, not optional)', async () => {
+      const renameSession = jest.fn();
+      const chat = { renameSession } as unknown as MobileChatRpcService;
+      const service = new TunnelHandlerService({}, chat, mobileBoard, mobileViewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 's8',
+          method: 'chat.renameSession',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(renameSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('terminal.viewport.* lease control', () => {
+    const SESSION_ID = '12121212-1212-4212-8212-121212121212';
+
+    it('delegates terminal.viewport.subscribe and returns the subscriptionId', async () => {
+      const subscribe = jest.fn().mockResolvedValue({ subscriptionId: 'vp-1' });
+      const viewport = { subscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v1',
+          method: 'terminal.viewport.subscribe',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ result: { subscriptionId: 'vp-1' } });
+      expect(subscribe).toHaveBeenCalledWith({ sessionId: SESSION_ID, projectId: PROJECT_ID });
+    });
+
+    it('rejects terminal.viewport.subscribe with a non-uuid sessionId before delegating', async () => {
+      const subscribe = jest.fn();
+      const viewport = { subscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v2',
+          method: 'terminal.viewport.subscribe',
+          params: { sessionId: 'not-a-uuid', projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('rejects terminal.viewport.subscribe when projectId is missing before delegating', async () => {
+      const subscribe = jest.fn();
+      const viewport = { subscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v3',
+          method: 'terminal.viewport.subscribe',
+          params: { sessionId: SESSION_ID },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(subscribe).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a SESSION_NOT_RUNNING AppError from subscribe as error.data.code', async () => {
+      const subscribe = jest
+        .fn()
+        .mockRejectedValue(new AppError('No running session', 'SESSION_NOT_RUNNING', 409));
+      const viewport = { subscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v4',
+          method: 'terminal.viewport.subscribe',
+          params: { sessionId: SESSION_ID, projectId: PROJECT_ID },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32603, data: { code: 'SESSION_NOT_RUNNING' } } });
+    });
+
+    it('delegates terminal.viewport.unsubscribe and returns { ok }', async () => {
+      const unsubscribe = jest.fn().mockReturnValue({ ok: true });
+      const viewport = { unsubscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v5',
+          method: 'terminal.viewport.unsubscribe',
+          params: { subscriptionId: 'vp-1' },
+        }),
+      ).resolves.toMatchObject({ result: { ok: true } });
+      expect(unsubscribe).toHaveBeenCalledWith({ subscriptionId: 'vp-1' });
+    });
+
+    it('rejects terminal.viewport.unsubscribe with an empty subscriptionId before delegating', async () => {
+      const unsubscribe = jest.fn();
+      const viewport = { unsubscribe } as unknown as ViewportStreamerService;
+      const service = new TunnelHandlerService({}, mobileChat, mobileBoard, viewport);
+
+      await expect(
+        service.handle({
+          jsonrpc: '2.0',
+          id: 'v6',
+          method: 'terminal.viewport.unsubscribe',
+          params: { subscriptionId: '' },
+        }),
+      ).resolves.toMatchObject({ error: { code: -32602, message: 'Invalid params' } });
+      expect(unsubscribe).not.toHaveBeenCalled();
     });
   });
 });

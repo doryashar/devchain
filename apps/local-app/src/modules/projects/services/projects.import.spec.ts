@@ -32,6 +32,7 @@ describe('ProjectsService', () => {
     getProject: jest.Mock;
     listProviders: jest.Mock;
     listProvidersByIds: jest.Mock;
+    listEnvScopesByProviderIds: jest.Mock;
     listProviderModelsByProviderIds: jest.Mock;
     bulkCreateProviderModels: jest.Mock;
     listPrompts: jest.Mock;
@@ -70,6 +71,8 @@ describe('ProjectsService', () => {
     getAgent: jest.Mock;
     getAgentProfile: jest.Mock;
     getProfileProviderConfig: jest.Mock;
+    parkSessionsFromAgents: jest.Mock;
+    applySessionPlan: jest.Mock;
   };
   let sessions: {
     listActiveSessions: jest.Mock;
@@ -112,6 +115,7 @@ describe('ProjectsService', () => {
       ),
       listProviders: jest.fn(),
       listProvidersByIds: jest.fn().mockResolvedValue([]),
+      listEnvScopesByProviderIds: jest.fn().mockReturnValue(new Map()),
       listProviderModelsByProviderIds: jest.fn().mockResolvedValue([]),
       bulkCreateProviderModels: jest.fn().mockResolvedValue({ added: [], existing: [] }),
       listPrompts: jest.fn(),
@@ -156,6 +160,8 @@ describe('ProjectsService', () => {
       getAgent: jest.fn(),
       getAgentProfile: jest.fn(),
       getProfileProviderConfig: jest.fn(),
+      parkSessionsFromAgents: jest.fn().mockResolvedValue(new Map()),
+      applySessionPlan: jest.fn().mockResolvedValue(undefined),
     };
 
     sessions = {
@@ -2543,6 +2549,85 @@ describe('ProjectsService', () => {
       await localService.importProject({ projectId, payload, dryRun: false });
 
       expect(runnerRefresh.refreshScheduleWindow).toHaveBeenCalled();
+      jest.restoreAllMocks();
+    });
+
+    it('exposes sessionPreservation counts in result — mixed preserve/delete scenario', async () => {
+      const projectId = 'project-123';
+      const profTplId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+      const provId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+      const agentTplId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+
+      // Two old agents: Coder (will match) and Reviewer (will not match new template)
+      storage.listAgents.mockResolvedValue({
+        items: [
+          { id: 'old-a-coder', name: 'Coder', profileId: 'old-profile-1' },
+          { id: 'old-a-reviewer', name: 'Reviewer', profileId: 'old-profile-1' },
+        ],
+        total: 2,
+        limit: 10000,
+        offset: 0,
+      });
+      storage.listAgentProfiles.mockResolvedValue({
+        items: [{ id: 'old-profile-1', name: 'Default Profile' }],
+        total: 1,
+        limit: 10000,
+        offset: 0,
+      });
+      storage.listPrompts.mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 });
+      storage.listStatuses.mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 });
+
+      storage.listProviders.mockResolvedValue({
+        items: [{ id: provId, name: 'claude' }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+
+      // Coder has sess-1; Reviewer has sess-2
+      storage.parkSessionsFromAgents.mockResolvedValue(
+        new Map([
+          ['old-a-coder', ['sess-1']],
+          ['old-a-reviewer', ['sess-2']],
+        ]),
+      );
+
+      // New template includes only Coder
+      const payload = {
+        profiles: [{ id: profTplId, name: 'Default Profile', provider: { name: 'claude' } }],
+        agents: [{ id: agentTplId, name: 'Coder', profileId: profTplId }],
+        statuses: [],
+        prompts: [],
+      };
+
+      storage.createAgentProfile.mockResolvedValue({ id: 'new-profile-1' });
+      storage.createProfileProviderConfig.mockResolvedValue({ id: 'new-config-1' });
+      storage.createAgent.mockResolvedValue({ id: 'new-coder-id', name: 'Coder' });
+      settings.updateSettings.mockResolvedValue(undefined);
+
+      jest.spyOn(devchainShared.ExportSchema, 'parse').mockReturnValue({
+        ...payload,
+        version: 1,
+        exportedAt: undefined,
+        initialPrompt: undefined,
+        projectSettings: undefined,
+        watchers: [],
+        subscribers: [],
+        _manifest: undefined,
+        scheduledEpics: [],
+      } as ReturnType<typeof devchainShared.ExportSchema.parse>);
+
+      const result = await service.importProject({ projectId, payload, dryRun: false });
+
+      expect(result).toMatchObject({
+        success: true,
+        sessionPreservation: { preservedCount: 1, removedCount: 1 },
+      });
+      expect(storage.applySessionPlan).toHaveBeenCalledWith(
+        [{ sessionId: 'sess-1', newAgentId: 'new-coder-id' }],
+        ['sess-2'],
+      );
+
       jest.restoreAllMocks();
     });
   });

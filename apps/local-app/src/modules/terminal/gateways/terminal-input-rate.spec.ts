@@ -72,6 +72,7 @@ function createGateway() {
 
   const sessionsService: Partial<SessionsService> = {
     markSessionFailed: jest.fn(),
+    usesAlternateScreenFor: jest.fn().mockReturnValue(false),
   };
 
   const registry = new TerminalSessionRegistry();

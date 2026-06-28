@@ -53,14 +53,23 @@ describe('EgressQueueService', () => {
     jest.restoreAllMocks();
   });
 
-  it('should default NOTIFICATIONS_SERVICE_URL to port 3003', async () => {
-    queue.enqueue(makePayload());
-    await (queue as unknown as { drainOnce: () => Promise<void> }).drainOnce();
+  it('should default NOTIFICATIONS_SERVICE_URL to notify.devchain.cc', async () => {
+    // The URL is read at call-time, so deleting the env var is enough to exercise the
+    // default — keeps the test hermetic w.r.t. a dev shell that exports the var.
+    const prev = process.env.NOTIFICATIONS_SERVICE_URL;
+    delete process.env.NOTIFICATIONS_SERVICE_URL;
+    try {
+      queue.enqueue(makePayload());
+      await (queue as unknown as { drainOnce: () => Promise<void> }).drainOnce();
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('localhost:3003'),
-      expect.anything(),
-    );
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('notify.devchain.cc'),
+        expect.anything(),
+      );
+    } finally {
+      if (prev === undefined) delete process.env.NOTIFICATIONS_SERVICE_URL;
+      else process.env.NOTIFICATIONS_SERVICE_URL = prev;
+    }
   });
 
   it('should enqueue and track length', () => {

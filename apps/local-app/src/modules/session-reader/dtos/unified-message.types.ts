@@ -78,4 +78,15 @@ export interface UnifiedMessage {
   isSidechain: boolean;
   isCompactSummary?: boolean;
   sourceToolUseId?: string;
+  /**
+   * Provider turn-completion signal for the LAST API response folded into this assistant
+   * message (Claude `message.stop_reason`: `'end_turn'` = completed turn, `'tool_use'`/`null`
+   * = paused awaiting a tool result / continuation). Set by the Claude parser; left undefined
+   * by providers whose turn boundaries are event-driven (Codex `turn_complete`).
+   *
+   * Used by the incremental cache-boundary continuation fold (`session-cache.service.ts`) to
+   * apply the over-merge guard: a continuation assistant arriving in a later slice must NOT
+   * fold onto a cached tail that already `end_turn`-ed (that is a new turn, not a continuation).
+   */
+  stopReason?: string | null;
 }

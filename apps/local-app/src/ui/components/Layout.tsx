@@ -576,26 +576,6 @@ function LayoutShell({
     }));
   }, []);
 
-  // Auto-expand section when child route is active
-  useEffect(() => {
-    const currentPath = location.pathname;
-    // Find section containing the active route
-    for (const section of visibleNavSections) {
-      if (!section.collapsible) continue; // Skip non-collapsible sections
-      const hasActiveItem = section.items.some(
-        (item) => currentPath === item.path || currentPath.startsWith(item.path + '/'),
-      );
-      if (hasActiveItem && collapsedSections[section.id]) {
-        // Expand the section containing the active route
-        setCollapsedSections((prev) => ({
-          ...prev,
-          [section.id]: false,
-        }));
-        break; // Only expand one section
-      }
-    }
-  }, [location.pathname, collapsedSections, visibleNavSections]);
-
   const openTerminalWindow = useTerminalWindowManager();
   const {
     windows: terminalWindows,
@@ -1309,6 +1289,11 @@ function LayoutShell({
             {visibleNavSections.map((section, sectionIndex) => {
               const isCollapsed = collapsedSections[section.id] ?? false;
               const showItems = !isCollapsed || !section.collapsible;
+              // Show an active dot on a collapsed section header when the current
+              // page lives inside it — preserves the "you are here" cue without
+              // auto-expanding the section.
+              const showActiveDot =
+                section.collapsible && isCollapsed && section.items.some((item) => isActive(item));
 
               return (
                 <div key={section.id}>
@@ -1353,6 +1338,12 @@ function LayoutShell({
                         aria-hidden="true"
                       />
                       {section.title}
+                      {showActiveDot && (
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary"
+                          aria-label="contains current page"
+                        />
+                      )}
                     </button>
                   )}
 
@@ -1525,8 +1516,7 @@ function LayoutShell({
               {selectedProjectId && (
                 <EpicSearchInput projectId={selectedProjectId} className="hidden lg:block" />
               )}
-              {/* Cloud connection indicator */}
-              {cloudUiEnabled && <CloudStatusIndicator />}
+              {/* Cloud connection indicator moved to TerminalDock right slot */}
               {/* Theme toggle: inline on >=sm, popover on small screens */}
               <div className="hidden sm:block">
                 <ThemeSelect value={theme} onChange={handleThemeChange} />
@@ -1696,6 +1686,7 @@ function LayoutShell({
             }}
             onSessionsChange={handleDockSessionsChange}
             onSessionTerminated={handleDockSessionTerminated}
+            rightSlot={cloudUiEnabled ? <CloudStatusIndicator /> : null}
           />
         </div>
       </div>

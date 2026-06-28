@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4c44f6ae-46cb-44d0-822a-58e13bfd11aa",
-  "prevId": "d50218cd-60ef-4ae7-bd9c-b8c702e2faec",
+  "id": "3c07541a-0aba-439f-838e-37c74e6793bd",
+  "prevId": "1e64f8e5-e146-46a7-a397-3139c6fe64ec",
   "tables": {
     "agent_profile_prompts": {
       "name": "agent_profile_prompts",
@@ -3238,6 +3238,88 @@
         }
       },
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "provider_env_scopes": {
+      "name": "provider_env_scopes",
+      "columns": {
+        "provider_id": {
+          "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "env_key": {
+          "name": "env_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "provider_env_scopes_project_id_idx": {
+          "name": "provider_env_scopes_project_id_idx",
+          "columns": [
+            "project_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "provider_env_scopes_provider_id_providers_id_fk": {
+          "name": "provider_env_scopes_provider_id_providers_id_fk",
+          "tableFrom": "provider_env_scopes",
+          "tableTo": "providers",
+          "columnsFrom": [
+            "provider_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "provider_env_scopes_project_id_projects_id_fk": {
+          "name": "provider_env_scopes_project_id_projects_id_fk",
+          "tableFrom": "provider_env_scopes",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "provider_env_scopes_provider_id_env_key_project_id_pk": {
+          "columns": [
+            "provider_id",
+            "env_key",
+            "project_id"
+          ],
+          "name": "provider_env_scopes_provider_id_env_key_project_id_pk"
+        }
+      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

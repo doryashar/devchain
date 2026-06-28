@@ -31,7 +31,7 @@ describe('RuntimeController', () => {
       bootId: expect.any(String),
       dockerAvailable: false,
       features: {
-        cloudUi: false,
+        cloudUi: true,
       },
     });
   });
@@ -49,7 +49,7 @@ describe('RuntimeController', () => {
       bootId: expect.any(String),
       dockerAvailable: false,
       features: {
-        cloudUi: false,
+        cloudUi: true,
       },
     });
   });
@@ -70,6 +70,15 @@ describe('RuntimeController', () => {
     const result = await controller.getRuntime();
 
     expect(result.features).toEqual({ cloudUi: true });
+  });
+
+  it('reports Cloud UI feature disabled when DEVCHAIN_CLOUD_UI_ENABLED=0', async () => {
+    process.env.DEVCHAIN_CLOUD_UI_ENABLED = '0';
+    resetEnvConfig();
+
+    const result = await controller.getRuntime();
+
+    expect(result.features).toEqual({ cloudUi: false });
   });
 
   it('includes runtimeToken when RUNTIME_TOKEN is set', async () => {

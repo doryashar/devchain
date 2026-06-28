@@ -7,7 +7,7 @@ import { useRealtimeDispatch } from '@/ui/hooks/useRealtimeDispatch';
 import type { RealtimeInvalidationRegistry } from '@/ui/lib/realtime-invalidation-registry';
 import { useToast } from '@/ui/hooks/use-toast';
 import type { Message } from '@/ui/lib/chat';
-import { chatQueryKeys, type AgentOrGuest } from './useChatQueries';
+import { type AgentOrGuest } from './useChatQueries';
 import { teamsQueryKeys } from '@/ui/lib/teams';
 
 export interface UseChatSocketOptions {

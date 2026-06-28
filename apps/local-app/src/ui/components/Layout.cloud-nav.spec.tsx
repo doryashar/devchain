@@ -171,7 +171,7 @@ describe('Cloud sidebar navigation', () => {
     cleanup();
   });
 
-  it('hides Cloud and Notifications nav items by default', async () => {
+  it('hides Cloud and Notifications nav items when cloud UI is disabled', async () => {
     await renderLayout();
     expect(screen.queryByRole('link', { name: 'Cloud' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();

@@ -8,6 +8,7 @@ import { SessionsService } from '../../sessions/services/sessions.service';
 import { SessionCoordinatorService } from '../../sessions/services/session-coordinator.service';
 import { EventsService } from '../../events/services/events.service';
 import { SessionRuntime } from '../../sessions/services/session-runtime';
+import { SettingsService } from '../../settings/services/settings.service';
 
 jest.mock('../../../common/logging/logger', () => ({
   createLogger: () => ({ info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() }),
@@ -42,6 +43,9 @@ describe('AgentsController', () => {
   };
   let eventsService: {
     publish: jest.Mock;
+  };
+  let settingsService: {
+    removeAgentFromProjectPresets: jest.Mock;
   };
 
   const mockAgent: Agent = {
@@ -129,6 +133,10 @@ describe('AgentsController', () => {
       publish: jest.fn().mockResolvedValue('event-id-1'),
     };
 
+    settingsService = {
+      removeAgentFromProjectPresets: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AgentsController],
       providers: [
@@ -151,6 +159,10 @@ describe('AgentsController', () => {
         {
           provide: SessionRuntime,
           useValue: mockSessionRuntime,
+        },
+        {
+          provide: SettingsService,
+          useValue: settingsService,
         },
       ],
     }).compile();
@@ -559,7 +571,7 @@ describe('AgentsController', () => {
   });
 
   describe('DELETE /api/agents/:id', () => {
-    it('deletes an agent and publishes agent.deleted event', async () => {
+    it('deletes an agent, cleans up presets, and publishes agent.deleted event', async () => {
       storage.getAgent.mockResolvedValue(mockAgent);
       storage.deleteAgent.mockResolvedValue(undefined);
 
@@ -567,6 +579,10 @@ describe('AgentsController', () => {
 
       expect(storage.getAgent).toHaveBeenCalledWith('agent-1');
       expect(storage.deleteAgent).toHaveBeenCalledWith('agent-1');
+      expect(settingsService.removeAgentFromProjectPresets).toHaveBeenCalledWith(
+        'project-1',
+        'Test Agent',
+      );
       expect(eventsService.publish).toHaveBeenCalledWith('agent.deleted', {
         agentId: 'agent-1',
         agentName: 'Test Agent',
@@ -577,14 +593,48 @@ describe('AgentsController', () => {
       });
     });
 
+    it('preset cleanup is called after storage.deleteAgent, not before', async () => {
+      storage.getAgent.mockResolvedValue(mockAgent);
+      const callOrder: string[] = [];
+      storage.deleteAgent.mockImplementation(async () => {
+        callOrder.push('deleteAgent');
+      });
+      settingsService.removeAgentFromProjectPresets.mockImplementation(async () => {
+        callOrder.push('removeAgentFromProjectPresets');
+      });
+
+      await controller.deleteAgent('agent-1');
+
+      expect(callOrder).toEqual(['deleteAgent', 'removeAgentFromProjectPresets']);
+    });
+
     it('throws NotFoundError when agent does not exist', async () => {
       storage.getAgent.mockRejectedValue(new NotFoundError('Agent', 'missing'));
 
       await expect(controller.deleteAgent('missing')).rejects.toThrow(NotFoundError);
       expect(storage.deleteAgent).not.toHaveBeenCalled();
+      expect(settingsService.removeAgentFromProjectPresets).not.toHaveBeenCalled();
     });
 
-    it('still deletes when event publish fails (best-effort)', async () => {
+    it('does not call preset cleanup when storage.deleteAgent rejects', async () => {
+      storage.getAgent.mockResolvedValue(mockAgent);
+      storage.deleteAgent.mockRejectedValue(new Error('active session conflict'));
+
+      await expect(controller.deleteAgent('agent-1')).rejects.toThrow('active session conflict');
+      expect(settingsService.removeAgentFromProjectPresets).not.toHaveBeenCalled();
+      expect(eventsService.publish).not.toHaveBeenCalled();
+    });
+
+    it('rethrows cleanup failure and does not publish agent.deleted', async () => {
+      storage.getAgent.mockResolvedValue(mockAgent);
+      storage.deleteAgent.mockResolvedValue(undefined);
+      settingsService.removeAgentFromProjectPresets.mockRejectedValue(new Error('cleanup failed'));
+
+      await expect(controller.deleteAgent('agent-1')).rejects.toThrow('cleanup failed');
+      expect(eventsService.publish).not.toHaveBeenCalled();
+    });
+
+    it('still completes when event publish fails (best-effort)', async () => {
       storage.getAgent.mockResolvedValue(mockAgent);
       storage.deleteAgent.mockResolvedValue(undefined);
       eventsService.publish.mockRejectedValueOnce(new Error('publish failed'));
@@ -592,6 +642,7 @@ describe('AgentsController', () => {
       await controller.deleteAgent('agent-1');
 
       expect(storage.deleteAgent).toHaveBeenCalledWith('agent-1');
+      expect(settingsService.removeAgentFromProjectPresets).toHaveBeenCalled();
       expect(eventsService.publish).toHaveBeenCalled();
     });
   });

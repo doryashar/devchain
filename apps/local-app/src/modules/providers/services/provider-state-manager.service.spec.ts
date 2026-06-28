@@ -78,6 +78,7 @@ describe('ProviderStateManager', () => {
   let mockStorage: {
     getProvider: jest.Mock;
     updateProvider: jest.Mock;
+    updateProviderWithScopes: jest.Mock;
   };
   let mockExecutor: jest.Mocked<Pick<ProcessExecutor, 'run'>>;
   let mockSyncService: { syncProviderToAllProjects: jest.Mock };
@@ -86,6 +87,9 @@ describe('ProviderStateManager', () => {
     mockStorage = {
       getProvider: jest.fn(),
       updateProvider: jest
+        .fn()
+        .mockImplementation((_id, payload) => Promise.resolve({ ...makeProvider(), ...payload })),
+      updateProviderWithScopes: jest
         .fn()
         .mockImplementation((_id, payload) => Promise.resolve({ ...makeProvider(), ...payload })),
       createProvider: jest
@@ -138,13 +142,15 @@ describe('ProviderStateManager', () => {
         oneMillionContextEnabled: true,
       });
 
-      expect(mockStorage.updateProvider).toHaveBeenCalledWith(
+      expect(mockStorage.updateProviderWithScopes).toHaveBeenCalledWith(
         'provider-1',
         expect.objectContaining({
           oneMillionContextEnabled: true,
           autoCompactThreshold1m: 50,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.anything(),
       );
       expect(provider.oneMillionContextEnabled).toBe(true);
     });
@@ -156,7 +162,7 @@ describe('ProviderStateManager', () => {
 
       await service.update('provider-1', { oneMillionContextEnabled: true });
 
-      const payload = mockStorage.updateProvider.mock.calls[0][1];
+      const payload = mockStorage.updateProviderWithScopes.mock.calls[0][1];
       expect(payload.autoCompactThreshold).toBeUndefined();
     });
   });
@@ -192,13 +198,15 @@ describe('ProviderStateManager', () => {
 
       await service.update('provider-1', { oneMillionContextEnabled: false });
 
-      expect(mockStorage.updateProvider).toHaveBeenCalledWith(
+      expect(mockStorage.updateProviderWithScopes).toHaveBeenCalledWith(
         'provider-1',
         expect.objectContaining({
           oneMillionContextEnabled: false,
           autoCompactThreshold1m: null,
           autoCompactThreshold: 95,
         }),
+        undefined,
+        expect.anything(),
       );
     });
 
@@ -211,7 +219,7 @@ describe('ProviderStateManager', () => {
         autoCompactThreshold: 80,
       });
 
-      const payload = mockStorage.updateProvider.mock.calls[0][1];
+      const payload = mockStorage.updateProviderWithScopes.mock.calls[0][1];
       expect(payload.autoCompactThreshold).toBe(80);
     });
   });
@@ -229,7 +237,7 @@ describe('ProviderStateManager', () => {
 
       await service.update('provider-1', { binPath: '/new/claude' });
 
-      expect(mockStorage.updateProvider).toHaveBeenCalledWith(
+      expect(mockStorage.updateProviderWithScopes).toHaveBeenCalledWith(
         'provider-1',
         expect.objectContaining({
           binPath: '/new/claude',
@@ -237,6 +245,8 @@ describe('ProviderStateManager', () => {
           autoCompactThreshold: 95,
           autoCompactThreshold1m: null,
         }),
+        undefined,
+        expect.anything(),
       );
       expect(probeProofService.hasValidProof('provider-1', '/old/claude')).toBe(false);
     });
@@ -252,7 +262,7 @@ describe('ProviderStateManager', () => {
 
       await service.update('provider-1', { binPath: '/new/claude' });
 
-      const payload = mockStorage.updateProvider.mock.calls[0][1];
+      const payload = mockStorage.updateProviderWithScopes.mock.calls[0][1];
       expect(payload.oneMillionContextEnabled).toBeUndefined();
     });
 
@@ -266,7 +276,7 @@ describe('ProviderStateManager', () => {
 
       await service.update('provider-1', { binPath: '/new/codex' });
 
-      const payload = mockStorage.updateProvider.mock.calls[0][1];
+      const payload = mockStorage.updateProviderWithScopes.mock.calls[0][1];
       expect(payload.oneMillionContextEnabled).toBeUndefined();
     });
   });

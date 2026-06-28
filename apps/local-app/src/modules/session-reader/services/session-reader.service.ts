@@ -4,12 +4,12 @@ import { TranscriptPathValidator } from './transcript-path-validator.service';
 import { SessionCacheService } from './session-cache.service';
 import { SessionsService } from '../../sessions/services/sessions.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/interfaces/storage.interface';
-import { stat } from 'node:fs/promises';
 import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 import { buildChunks } from '../builders/chunk-builder';
 import { decodeCursor, encodeCursor } from './transcript-cursor';
 import { truncateMessages, truncateChunks } from './transcript-truncation';
 import { ProviderAdapterFactory, isContextWindowCapable } from '../../providers/adapters';
+import type { SessionSourceRef } from '../adapters/session-reader-adapter.interface';
 import type { UnifiedSession, UnifiedMetrics, UnifiedMessage } from '../dtos/unified-session.types';
 import type { UnifiedChunk } from '../dtos/unified-chunk.types';
 
@@ -20,6 +20,14 @@ export interface TranscriptSummary {
   metrics: UnifiedMetrics;
   messageCount: number;
   isOngoing: boolean;
+}
+
+/**
+ * Summary plus the opaque tail cursor, minted from the same parse — lets a
+ * client bootstrap cursor-tail polling without a separate full-transcript fetch.
+ */
+export interface TranscriptSummaryWithCursor extends TranscriptSummary {
+  cursor: string;
 }
 
 /** Paginated UnifiedChunk response with cursor-stable IDs */
@@ -85,6 +93,15 @@ export interface TranscriptToolResult {
 
 export interface TranscriptTailResponse {
   cursor: string;
+  /**
+   * Window-stable splice anchor: the stable id of the first chunk in
+   * `deltaChunks` (the chunk that was last at cursor time). A windowed client
+   * locates this id in its own loaded window and replaces from there, which
+   * correctly handles the last chunk *growing* in place. `null` on a no-op
+   * (empty delta). Authoritative for mobile.
+   */
+  replaceFromChunkId: string | null;
+  /** Absolute index, retained for non-windowed callers; `replaceFromChunkId` is authoritative. */
   replaceFromChunkIndex: number;
   deltaChunks: UnifiedChunk[];
   deltaMessages: UnifiedMessage[];
@@ -105,13 +122,18 @@ interface ParseTimingData {
   cacheHit: boolean;
   fileSizeBytes: number;
   fileMtimeMs: number;
+  /** Numeric monotonic source version (file: byte size) — cursor first component. */
+  sourceVersion: number;
   providerName: string;
 }
 
 @Injectable()
 export class SessionReaderService {
   private readonly logger = new Logger(SessionReaderService.name);
-  private readonly chunksCache = new Map<string, { chunks: UnifiedChunk[]; lastOffset: number }>();
+  private readonly chunksCache = new Map<
+    string,
+    { chunks: UnifiedChunk[]; sourceVersion: number }
+  >();
 
   constructor(
     private readonly adapterFactory: SessionReaderAdapterFactory,
@@ -172,6 +194,28 @@ export class SessionReaderService {
       metrics,
       messageCount: metrics.messageCount,
       isOngoing: metrics.isOngoing,
+    };
+  }
+
+  /**
+   * Get summary metrics PLUS the opaque tail cursor for the session, computed
+   * from a single parse (no extra full-transcript fetch). The cursor is the
+   * same opaque format `getTranscriptTail(since)` consumes, so a client can load
+   * the summary on session-open and immediately begin cursor-tail polling.
+   */
+  async getTranscriptSummaryWithCursor(sessionId: string): Promise<TranscriptSummaryWithCursor> {
+    const { session, parseTiming } = await this.getParsedSession(sessionId);
+    const metrics: UnifiedMetrics = session.metrics;
+    const chunks = session.chunks ?? buildChunks(session.messages);
+    const cursor = encodeCursor(parseTiming.sourceVersion, session.messages.length, chunks.length);
+
+    return {
+      sessionId,
+      providerName: session.providerName,
+      metrics,
+      messageCount: metrics.messageCount,
+      isOngoing: metrics.isOngoing,
+      cursor,
     };
   }
 
@@ -381,7 +425,7 @@ export class SessionReaderService {
       throw new ValidationError('Invalid cursor format');
     }
 
-    const { session } = await this.getParsedSession(sessionId);
+    const { session, parseTiming } = await this.getParsedSession(sessionId);
     const chunks = session.chunks ?? buildChunks(session.messages);
 
     if (cursorData.messageCount > session.messages.length) {
@@ -389,21 +433,45 @@ export class SessionReaderService {
     }
 
     const replaceFromChunkIndex = Math.max(0, cursorData.chunkCount - 1);
-    const deltaMessages = truncateMessages(session.messages.slice(cursorData.messageCount));
-    const deltaChunks = truncateChunks(chunks.slice(replaceFromChunkIndex));
 
-    let fileSizeBytes = 0;
-    try {
-      const { transcriptPath } = await this.resolveAdapter(sessionId);
-      fileSizeBytes = (await stat(transcriptPath)).size;
-    } catch {
-      /* best effort */
+    // The cursor's first component is the numeric monotonic source version.
+    // DB-backed sources (OpenCode) mutate/add *parts* in place without growing
+    // the message count, so a revision bump with an unchanged count is a real
+    // update — surface it as an in-place last-chunk replacement.
+    const revisionChanged = cursorData.fileSize !== parseTiming.sourceVersion;
+    const messageCountUnchanged = cursorData.messageCount === session.messages.length;
+
+    // True no-op only when BOTH the count AND the source revision are unchanged →
+    // return a TRUE-empty delta with the cursor untouched (preserves the client's
+    // adaptive backoff). Otherwise fall through to emit a delta.
+    if (messageCountUnchanged && !revisionChanged) {
+      return {
+        cursor: sinceCursor,
+        replaceFromChunkId: null,
+        replaceFromChunkIndex,
+        deltaChunks: [],
+        deltaMessages: [],
+        metrics: session.metrics,
+        totalChunkCount: chunks.length,
+        totalMessageCount: session.messages.length,
+      };
     }
 
-    const cursor = encodeCursor(fileSizeBytes, session.messages.length, chunks.length);
+    const deltaMessages = truncateMessages(session.messages.slice(cursorData.messageCount));
+    const deltaChunks = truncateChunks(chunks.slice(replaceFromChunkIndex));
+    // Window-stable anchor: the stable id of the first delta chunk (the chunk
+    // that was last at cursor time). Lets a windowed client splice regardless of
+    // absolute position and handles the last chunk growing in place.
+    const replaceFromChunkId = deltaChunks[0]?.id ?? null;
+
+    // First cursor component is the numeric monotonic source version (file: byte
+    // size), taken from the same parse — no extra resolve/stat round-trip, and
+    // source-type agnostic (works for DB-backed sources).
+    const cursor = encodeCursor(parseTiming.sourceVersion, session.messages.length, chunks.length);
 
     return {
       cursor,
+      replaceFromChunkId,
       replaceFromChunkIndex,
       deltaChunks,
       deltaMessages,
@@ -443,24 +511,24 @@ export class SessionReaderService {
     sessionId: string,
   ): Promise<{ session: UnifiedSession; parseTiming: ParseTimingData }> {
     const tResolve = performance.now();
-    const { adapter, transcriptPath, providerName, oneMillionContextEnabled } =
+    const { adapter, sourceRef, providerName, oneMillionContextEnabled } =
       await this.resolveAdapter(sessionId);
     const resolveMs = performance.now() - tResolve;
 
     const tParse = performance.now();
-    const { session, cacheHit, lastOffset, lastSize, lastMtime } =
-      await this.sessionCacheService.getOrParseWithMeta(sessionId, transcriptPath, adapter);
+    const { session, cacheHit, lastSize, lastMtime, sourceVersion } =
+      await this.sessionCacheService.getOrParseWithMeta(sessionId, sourceRef, adapter);
     const parseOrCacheHitMs = performance.now() - tParse;
 
     const cachedChunks = this.chunksCache.get(sessionId);
     let buildChunksMs = 0;
-    if (cachedChunks && cachedChunks.lastOffset === lastOffset) {
+    if (cachedChunks && cachedChunks.sourceVersion === sourceVersion) {
       session.chunks = cachedChunks.chunks;
     } else {
       const tBuild = performance.now();
       session.chunks = buildChunks(session.messages);
       buildChunksMs = performance.now() - tBuild;
-      this.chunksCache.set(sessionId, { chunks: session.chunks, lastOffset });
+      this.chunksCache.set(sessionId, { chunks: session.chunks, sourceVersion });
       if (this.chunksCache.size > CHUNKS_CACHE_MAX_ENTRIES) {
         const oldest = this.chunksCache.keys().next().value;
         if (oldest !== undefined) this.chunksCache.delete(oldest);
@@ -491,6 +559,7 @@ export class SessionReaderService {
         cacheHit,
         fileSizeBytes: lastSize,
         fileMtimeMs: lastMtime,
+        sourceVersion,
         providerName,
       },
     };
@@ -526,6 +595,7 @@ export class SessionReaderService {
   private async resolveAdapter(sessionId: string): Promise<{
     adapter: ReturnType<SessionReaderAdapterFactory['getAdapter']> & object;
     transcriptPath: string;
+    sourceRef: SessionSourceRef;
     providerName: string;
     oneMillionContextEnabled: boolean;
   }> {
@@ -581,11 +651,32 @@ export class SessionReaderService {
       providerName,
     );
 
+    // Generalized source reference threaded through the cache into the adapter so
+    // DB-backed adapters can locate the session via `providerSessionId`. `kind`
+    // is adapter-declared (defaults to 'file'); existing file adapters resolve to
+    // a file source with identical behavior. `providerSessionId` is populated from
+    // the persisted session row for DB sources (the OpenCode adapter requires it
+    // to locate the session inside the shared container); it stays undefined for
+    // file sources, so their behavior is byte-identical.
+    const sourceRef: SessionSourceRef = {
+      filePath: validatedPath,
+      providerName,
+      providerSessionId:
+        adapter.sourceKind === 'db' ? (session.providerSessionId ?? undefined) : undefined,
+      kind: adapter.sourceKind ?? 'file',
+    };
+
     this.logger.debug(
-      { sessionId, providerName, transcriptPath: validatedPath },
+      { sessionId, providerName, transcriptPath: validatedPath, sourceKind: sourceRef.kind },
       'Resolved adapter for session transcript',
     );
 
-    return { adapter, transcriptPath: validatedPath, providerName, oneMillionContextEnabled };
+    return {
+      adapter,
+      transcriptPath: validatedPath,
+      sourceRef,
+      providerName,
+      oneMillionContextEnabled,
+    };
   }
 }

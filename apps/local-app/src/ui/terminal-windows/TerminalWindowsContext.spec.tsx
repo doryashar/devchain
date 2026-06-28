@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { TerminalWindowsProvider, useTerminalWindows } from './TerminalWindowsContext';
 
@@ -25,8 +25,8 @@ describe('TerminalWindowsContext — updateWindowMeta short-circuit', () => {
       result.current.updateWindowMeta('win-1', {
         title: 'Updated Title',
         subtitle: 'Sub',
-        details: details as any,
-        menuItems: menuItems as any,
+        details: details,
+        menuItems: menuItems,
         sessionId: 'session-1',
       });
     });
@@ -37,8 +37,8 @@ describe('TerminalWindowsContext — updateWindowMeta short-circuit', () => {
       result.current.updateWindowMeta('win-1', {
         title: 'Updated Title',
         subtitle: 'Sub',
-        details: details as any,
-        menuItems: menuItems as any,
+        details: details,
+        menuItems: menuItems,
         sessionId: 'session-1',
       });
     });
@@ -63,7 +63,7 @@ describe('TerminalWindowsContext — updateWindowMeta short-circuit', () => {
     act(() => {
       result.current.updateWindowMeta('non-existent-id', {
         title: 'New Title',
-        details: [] as any,
+        details: [],
       });
     });
 

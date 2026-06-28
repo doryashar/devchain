@@ -5,6 +5,7 @@ import { TemplateCacheService } from './template-cache.service';
 import { createLogger } from '../../../common/logging/logger';
 import { NotFoundError, ValidationError, StorageError } from '../../../common/errors/error-types';
 import { ExportSchema } from '@devchain/shared';
+import type { ManifestData } from '@devchain/shared';
 import {
   isValidSlug,
   isValidVersion,
@@ -44,6 +45,8 @@ export interface UnifiedTemplateInfo {
   authorName?: string;
   /** Whether this is an official Devchain template */
   isOfficial?: boolean;
+  /** Optional sort order for the Create Project dialog. Lower numbers appear first; missing values sort last. */
+  order?: number;
 }
 
 /**
@@ -118,17 +121,7 @@ export class UnifiedTemplateService {
         try {
           const templatePath = join(templatesDir, fileName);
           const content = JSON.parse(readFileSync(templatePath, 'utf-8'));
-          const manifest = content._manifest as
-            | {
-                name?: string;
-                description?: string | null;
-                category?: string;
-                tags?: string[];
-                authorName?: string;
-                isOfficial?: boolean;
-                version?: string;
-              }
-            | undefined;
+          const manifest = content._manifest as ManifestData | undefined;
 
           return {
             slug,
@@ -141,6 +134,7 @@ export class UnifiedTemplateService {
             tags: manifest?.tags,
             authorName: manifest?.authorName,
             isOfficial: manifest?.isOfficial,
+            order: manifest?.order,
           };
         } catch (parseError) {
           // Fallback if parsing fails - use slug-derived name
@@ -183,6 +177,7 @@ export class UnifiedTemplateService {
       tags: info.tags,
       authorName: info.authorName,
       isOfficial: info.isOfficial,
+      order: info.order,
     }));
   }
 
@@ -210,9 +205,14 @@ export class UnifiedTemplateService {
       templateMap.set(template.slug, template);
     }
 
-    // Convert map to array and sort by name
+    // Convert map to array and sort by order ASC (missing order sorts last), then name ASC
     const result = Array.from(templateMap.values());
-    result.sort((a, b) => a.name.localeCompare(b.name));
+    result.sort((a, b) => {
+      const ao = a.order ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.order ?? Number.MAX_SAFE_INTEGER;
+      if (ao !== bo) return ao - bo;
+      return a.name.localeCompare(b.name);
+    });
 
     logger.debug(
       {

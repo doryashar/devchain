@@ -19,6 +19,12 @@ describe('OpencodeAdapter', () => {
     });
   });
 
+  describe('terminalOutputBehavior', () => {
+    it('opts into the terminal alternate screen (full-screen TUI provider)', () => {
+      expect(adapter.terminalOutputBehavior).toEqual({ usesAlternateScreen: true });
+    });
+  });
+
   describe('configFileName', () => {
     it('returns opencode.json as config file name', () => {
       expect(adapter.configFileName).toBe('opencode.json');

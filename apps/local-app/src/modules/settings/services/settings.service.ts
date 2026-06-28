@@ -216,6 +216,9 @@ export class SettingsService {
   ): Promise<void> {
     return this.presetDelegate.renameProviderConfigInProjectPresets(projectId, input);
   }
+  async removeAgentFromProjectPresets(projectId: string, agentName: string): Promise<void> {
+    return this.presetDelegate.removeAgentFromProjectPresets(projectId, agentName);
+  }
   async createProjectPreset(projectId: string, preset: unknown): Promise<void> {
     return this.presetDelegate.createProjectPreset(projectId, preset);
   }

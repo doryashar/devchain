@@ -391,11 +391,11 @@ describe('TerminalIOService', () => {
     });
   });
 
-  describe('disableAlternateScreen', () => {
-    it('sends correct tmux set-window-option argv', async () => {
+  describe('setAlternateScreen', () => {
+    it('turns alternate-screen off when disabled', async () => {
       fake.enqueueResponse({ type: 'success' });
 
-      await svc.disableAlternateScreen({ name: 'sess-1' });
+      await svc.setAlternateScreen({ name: 'sess-1' }, false);
 
       expect(fake.calls[0].argv).toEqual([
         'tmux',
@@ -404,6 +404,22 @@ describe('TerminalIOService', () => {
         '=sess-1',
         'alternate-screen',
         'off',
+      ]);
+      expect(fake.calls[0].mode).toBe('pipe');
+    });
+
+    it('turns alternate-screen on when enabled', async () => {
+      fake.enqueueResponse({ type: 'success' });
+
+      await svc.setAlternateScreen({ name: 'sess-1' }, true);
+
+      expect(fake.calls[0].argv).toEqual([
+        'tmux',
+        'set-window-option',
+        '-t',
+        '=sess-1',
+        'alternate-screen',
+        'on',
       ]);
       expect(fake.calls[0].mode).toBe('pipe');
     });

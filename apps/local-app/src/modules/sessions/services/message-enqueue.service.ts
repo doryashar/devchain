@@ -6,6 +6,10 @@ export interface PoolMessage {
   readonly text: string;
   readonly source: string;
   readonly submitKeys?: readonly string[];
+  /** Keys sent before the paste (e.g. `['Escape']`). Immediate path only. */
+  readonly preKeys?: readonly string[];
+  /** Delay (ms) after `preKeys`, before the paste. Ignored without `preKeys`. */
+  readonly preDelayMs?: number;
   readonly senderAgentId?: string;
   readonly immediate?: boolean;
   readonly projectId?: string;
@@ -37,6 +41,8 @@ export class MessageEnqueueService {
       const result = await this.pool.enqueue(message.agentId, message.text, {
         source: message.source,
         submitKeys: message.submitKeys ? [...message.submitKeys] : undefined,
+        preKeys: message.preKeys ? [...message.preKeys] : undefined,
+        preDelayMs: message.preDelayMs,
         senderAgentId: message.senderAgentId,
         immediate: message.immediate,
         projectId: message.projectId,

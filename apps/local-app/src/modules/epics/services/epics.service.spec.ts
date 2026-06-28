@@ -5,7 +5,7 @@ import type { SettingsService } from '../../settings/services/settings.service';
 import type { CreateEpic, Epic, UpdateEpic } from '../../storage/models/domain.models';
 import type { EventEmitter2 } from '@nestjs/event-emitter';
 import type { AutoAssignRulesService } from '../../auto-assign-rules/services/auto-assign-rules.service';
-import { ValidationError } from '../../../common/errors/error-types';
+import { NotFoundError, ValidationError } from '../../../common/errors/error-types';
 
 describe('EpicsService', () => {
   let storage: {
@@ -20,6 +20,7 @@ describe('EpicsService', () => {
     getStatus: jest.Mock;
     listSubEpics: jest.Mock;
     createEpicComment: jest.Mock;
+    deleteEpicCommentScoped: jest.Mock;
   };
   let eventsService: { publish: jest.Mock };
   let settingsService: { getSetting: jest.Mock; getAutoCleanStatusIds: jest.Mock };
@@ -56,6 +57,7 @@ describe('EpicsService', () => {
       getStatus: jest.fn(),
       listSubEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       createEpicComment: jest.fn(),
+      deleteEpicCommentScoped: jest.fn(),
     };
     eventsService = { publish: jest.fn().mockResolvedValue('event-id') };
     settingsService = {
@@ -93,6 +95,37 @@ describe('EpicsService', () => {
         title: baseEpic.title,
       }),
     );
+  });
+
+  describe('deleteEpicComment (project-scoped, mobile board)', () => {
+    it('deletes a comment scoped to its epic when the epic is in the project', async () => {
+      storage.getEpic.mockResolvedValue(baseEpic);
+      storage.deleteEpicCommentScoped.mockResolvedValue(true);
+
+      await expect(
+        service.deleteEpicComment('project-1', 'epic-1', 'comment-1'),
+      ).resolves.toBeUndefined();
+
+      expect(storage.deleteEpicCommentScoped).toHaveBeenCalledWith('epic-1', 'comment-1');
+    });
+
+    it('rejects a cross-project epic with a clean not-found (no scoped delete)', async () => {
+      storage.getEpic.mockResolvedValue({ ...baseEpic, projectId: 'other-project' });
+
+      await expect(
+        service.deleteEpicComment('project-1', 'epic-1', 'comment-1'),
+      ).rejects.toBeInstanceOf(NotFoundError);
+      expect(storage.deleteEpicCommentScoped).not.toHaveBeenCalled();
+    });
+
+    it('refuses a comment that belongs to another epic (scoped delete matched no row)', async () => {
+      storage.getEpic.mockResolvedValue(baseEpic);
+      storage.deleteEpicCommentScoped.mockResolvedValue(false);
+
+      await expect(
+        service.deleteEpicComment('project-1', 'epic-1', 'comment-from-other-epic'),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
   });
 
   describe('epic.created event', () => {

@@ -26,6 +26,7 @@ const ManifestSchema = z
     publishedAt: z.string().optional(),
     changelog: z.string().optional(),
     gitCommit: z.string().optional(),
+    order: z.number().int().optional(),
   })
   .strict();
 
@@ -149,6 +150,29 @@ describe('ManifestSchema semver validation', () => {
         name: 'Test Template',
         unknownField: 'value',
       });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('order field', () => {
+    it('accepts numeric order', () => {
+      const result = ManifestSchema.safeParse({ name: 'x', order: 10 });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.order).toBe(10);
+    });
+
+    it('accepts without order (backward compatible)', () => {
+      const result = ManifestSchema.safeParse({ name: 'x' });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects string order', () => {
+      const result = ManifestSchema.safeParse({ name: 'x', order: '10' });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects float order (non-integer)', () => {
+      const result = ManifestSchema.safeParse({ name: 'x', order: 1.5 });
       expect(result.success).toBe(false);
     });
   });

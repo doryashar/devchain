@@ -923,6 +923,32 @@ describe('SettingsService (preset CRUD)', () => {
     });
   });
 
+  describe('removeAgentFromProjectPresets', () => {
+    it('passes through agent removal to the preset delegate', async () => {
+      await service.setProjectPresets('proj-1', [
+        {
+          name: 'My Preset',
+          agentConfigs: [
+            { agentName: 'Agent1', providerConfigName: 'Config1' },
+            { agentName: 'Agent2', providerConfigName: 'Config2' },
+          ],
+        },
+      ]);
+
+      await service.removeAgentFromProjectPresets('proj-1', 'agent1');
+
+      const configs = service.getProjectPresets('proj-1')[0].agentConfigs;
+      expect(configs).toHaveLength(1);
+      expect(configs[0].agentName).toBe('Agent2');
+    });
+
+    it('throws ValidationError for whitespace-only agent name', async () => {
+      await expect(service.removeAgentFromProjectPresets('proj-1', '   ')).rejects.toThrow(
+        'Agent name cannot be empty or whitespace only',
+      );
+    });
+  });
+
   describe('renameProviderConfigInProjectPresets', () => {
     it('passes through provider config preset renames to the preset delegate', async () => {
       await service.setProjectPresets('proj-1', [
@@ -2059,11 +2085,11 @@ describe('SettingsService — CRITICAL: updateSettings() cross-delegate atomicit
 });
 
 // ==========================================================================
-// API surface inventory — 32 public methods (thin facade after 4B.6)
+// API surface inventory — 33 public methods (thin facade after 4B.6)
 // ==========================================================================
 
 describe('SettingsService — API surface inventory', () => {
-  it('has exactly 32 public methods on prototype (no private methods — all logic in delegates)', () => {
+  it('has exactly 33 public methods on prototype (no private methods — all logic in delegates)', () => {
     const db = createTestDb();
     const { service } = createTestService(db);
 
@@ -2100,6 +2126,7 @@ describe('SettingsService — API surface inventory', () => {
       'clearProjectPresets',
       'getAllProjectPresetsMap',
       'renameProviderConfigInProjectPresets',
+      'removeAgentFromProjectPresets',
       'createProjectPreset',
       'updateProjectPreset',
       'deleteProjectPreset',
