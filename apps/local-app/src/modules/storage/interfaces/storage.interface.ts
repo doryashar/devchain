@@ -80,6 +80,9 @@ import {
   UpdateConnectorSyncState,
   ConnectorFieldMapping,
   CreateConnectorFieldMapping,
+  EpicAssignmentRule,
+  CreateEpicAssignmentRule,
+  UpdateEpicAssignmentRule,
 } from '../models/domain.models';
 
 export interface ListOptions {
@@ -625,6 +628,19 @@ export interface StorageService
     SubscriberStorage,
     ReviewStorage,
     ScheduledEpicStorage,
-    ConnectorStorage {}
+    ConnectorStorage,
+    EpicAssignmentRuleStorage {}
+
+export interface EpicAssignmentRuleStorage {
+  listEpicAssignmentRules(projectId: string): Promise<EpicAssignmentRule[]>;
+  getEpicAssignmentRule(id: string): Promise<EpicAssignmentRule | null>;
+  createEpicAssignmentRule(data: CreateEpicAssignmentRule): Promise<EpicAssignmentRule>;
+  updateEpicAssignmentRule(id: string, data: UpdateEpicAssignmentRule): Promise<EpicAssignmentRule>;
+  deleteEpicAssignmentRule(id: string): Promise<void>;
+  reorderEpicAssignmentRules(
+    projectId: string,
+    items: Array<{ id: string; priority: number }>,
+  ): Promise<void>;
+}
 
 export const STORAGE_SERVICE = 'STORAGE_SERVICE';
