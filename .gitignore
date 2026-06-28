@@ -32,5 +32,8 @@ apps/mobile-app/ios/
 # Local tool metadata
 .serena/
 
+# Brainstorming mockups (superpowers visual companion)
+.superpowers/
+
 # Binary tarballs
 *.tgz
