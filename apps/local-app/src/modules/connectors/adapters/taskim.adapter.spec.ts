@@ -12,30 +12,37 @@ function mockResponse(body: unknown, ok = true, status = 200) {
   };
 }
 
+function mockFetchSequence(responses: Array<{ ok?: boolean; status?: number; body: unknown }>) {
+  const queue = [...responses];
+  global.fetch = jest.fn(async () => {
+    const next = queue.shift();
+    if (!next) throw new Error('No more mock responses queued');
+    const ok = next.ok ?? true;
+    const status = next.status ?? (ok ? 200 : 400);
+    return { ok, status, json: async () => next.body } as unknown as Response;
+  }) as unknown as typeof fetch;
+}
+
+const tokenConfig = {
+  apiUrl: 'http://taskim.local',
+  credentials: { token: 'tok-123' },
+};
+
 describe('TaskimAdapter', () => {
   let adapter: TaskimAdapter;
 
   beforeEach(() => {
     adapter = new TaskimAdapter();
+    global.fetch = mockFetch;
     mockFetch.mockReset();
   });
 
   const config = {
     apiUrl: 'http://localhost:3000',
-    credentials: { email: 'test@example.com', password: 'pass' },
+    credentials: { token: 'tok-123' },
     workspaceId: 'ws-1',
     externalProjectId: 'proj-1',
   };
-
-  it('should authenticate and cache token', async () => {
-    mockFetch
-      .mockResolvedValueOnce(mockResponse({ accessToken: 'jwt-token' }))
-      .mockResolvedValueOnce(mockResponse([]));
-
-    const result = await adapter.testConnection(config);
-    expect(result.success).toBe(true);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-  });
 
   it('should test connection and return failure on bad auth', async () => {
     mockFetch.mockResolvedValueOnce(mockResponse({ message: 'Unauthorized' }, false, 401));
@@ -62,16 +69,12 @@ describe('TaskimAdapter', () => {
   });
 
   it('should push a new epic (create task)', async () => {
-    mockFetch
-      .mockResolvedValueOnce(mockResponse({ accessToken: 'jwt' }))
-      .mockResolvedValueOnce(mockResponse({ id: 'task-999' }));
+    mockFetch.mockResolvedValueOnce(mockResponse({ id: 'task-999' }));
 
     const result = await adapter.pushEpic(
       {
         epic: { id: 'epic-1', title: 'Test', description: 'desc' } as any,
-        statusMappings: [
-          { devchainStatusLabel: 'New', externalStatusId: 'todo' } as any,
-        ],
+        statusMappings: [{ devchainStatusLabel: 'New', externalStatusId: 'todo' } as any],
         syncState: { externalId: null, lastSyncedAt: null },
       },
       config,
@@ -79,5 +82,103 @@ describe('TaskimAdapter', () => {
 
     expect(result.success).toBe(true);
     expect(result.externalId).toBe('task-999');
+  });
+});
+
+describe('TaskimAdapter listWorkspaces/listProjects/createWorkspace/createProject', () => {
+  it('listWorkspaces GETs /api/v1/workspaces and returns {id,name}[] (array shape)', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([
+      {
+        body: [
+          { id: 'ws-1', name: 'Acme' },
+          { id: 'ws-2', name: 'Omega' },
+        ],
+      },
+    ]);
+    const result = await adapter.listWorkspaces(tokenConfig);
+    expect(result).toEqual([
+      { id: 'ws-1', name: 'Acme' },
+      { id: 'ws-2', name: 'Omega' },
+    ]);
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe(
+      'http://taskim.local/api/v1/workspaces',
+    );
+  });
+
+  it('listWorkspaces handles { data: [...] } shape', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([{ body: { data: [{ id: 'ws-1', name: 'Acme' }] } }]);
+    const result = await adapter.listWorkspaces(tokenConfig);
+    expect(result).toEqual([{ id: 'ws-1', name: 'Acme' }]);
+  });
+
+  it('listProjects requires workspaceId and GETs /api/v1/workspaces/:wid/projects', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([{ body: [{ id: 'p-1', name: 'Board A' }] }]);
+    const result = await adapter.listProjects({ ...tokenConfig, workspaceId: 'ws-1' });
+    expect(result).toEqual([{ id: 'p-1', name: 'Board A' }]);
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe(
+      'http://taskim.local/api/v1/workspaces/ws-1/projects',
+    );
+  });
+
+  it('listProjects returns [] when no workspaceId', async () => {
+    const adapter = new TaskimAdapter();
+    const result = await adapter.listProjects(tokenConfig);
+    expect(result).toEqual([]);
+  });
+
+  it('createWorkspace POSTs {name} and returns {id,name}', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([{ body: { id: 'ws-new', name: 'Fresh' } }]);
+    const result = await adapter.createWorkspace(tokenConfig, 'Fresh');
+    expect(result).toEqual({ id: 'ws-new', name: 'Fresh' });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe('http://taskim.local/api/v1/workspaces');
+    expect((init as any).method).toBe('POST');
+    expect(JSON.parse((init as any).body)).toEqual({ name: 'Fresh' });
+  });
+
+  it('createWorkspace throws on non-2xx', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([{ ok: false, status: 403, body: { message: 'forbidden' } }]);
+    await expect(adapter.createWorkspace(tokenConfig, 'X')).rejects.toThrow();
+  });
+
+  it('createProject POSTs {name} under the workspace', async () => {
+    const adapter = new TaskimAdapter();
+    mockFetchSequence([{ body: { id: 'p-new', name: 'Board N' } }]);
+    const result = await adapter.createProject({ ...tokenConfig, workspaceId: 'ws-1' }, 'Board N');
+    expect(result).toEqual({ id: 'p-new', name: 'Board N' });
+    const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe('http://taskim.local/api/v1/workspaces/ws-1/projects');
+    expect((init as any).method).toBe('POST');
+    expect(JSON.parse((init as any).body)).toEqual({ name: 'Board N' });
+  });
+
+  it('createProject throws when workspaceId is missing', async () => {
+    const adapter = new TaskimAdapter();
+    await expect(adapter.createProject(tokenConfig, 'Board N')).rejects.toThrow();
+  });
+});
+
+describe('TaskimAdapter authenticate (token-only)', () => {
+  it('uses credentials.token directly as Bearer without any login POST', async () => {
+    const adapter = new TaskimAdapter();
+    let postedLogin = false;
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      const s = String(url);
+      if (s.endsWith('/api/v1/auth/login')) postedLogin = true;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'ws-1', name: 'x' }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+    await adapter.listWorkspaces(tokenConfig);
+    expect(postedLogin).toBe(false);
+    const authHeader = (global.fetch as jest.Mock).mock.calls[0][1]?.headers?.Authorization;
+    expect(authHeader).toBe('Bearer tok-123');
   });
 });

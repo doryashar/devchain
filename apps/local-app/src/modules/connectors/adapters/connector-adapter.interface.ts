@@ -51,7 +51,13 @@ export interface ConnectorAdapter {
 
   testConnection(config: Connector['config']): Promise<{ success: boolean; error?: string }>;
 
-  listRemoteProjects(config: Connector['config']): Promise<{ id: string; name: string }[]>;
+  listWorkspaces(config: Connector['config']): Promise<{ id: string; name: string }[]>;
+
+  listProjects(config: Connector['config']): Promise<{ id: string; name: string }[]>;
+
+  createWorkspace(config: Connector['config'], name: string): Promise<{ id: string; name: string }>;
+
+  createProject(config: Connector['config'], name: string): Promise<{ id: string; name: string }>;
 
   pushEpic(input: PushEpicInput, config: Connector['config']): Promise<PushEpicResult>;
 

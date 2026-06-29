@@ -34,41 +34,17 @@ export class TaskimAdapter implements ConnectorAdapter {
   }
 
   private async authenticate(config: TaskimConfig): Promise<string> {
-    const cacheKey = config.apiUrl;
+    const cacheKey = `${config.apiUrl}:${config.credentials.token ?? ''}`;
     const cached = this.tokenCache.get(cacheKey);
-
-    if (cached && cached.expiresAt > Date.now() + 60_000) {
+    if (cached && cached.expiresAt > Date.now()) {
       return cached.token;
     }
-
-    if (config.credentials.token) {
-      this.tokenCache.set(cacheKey, {
-        token: config.credentials.token,
-        expiresAt: Date.now() + 3600_000,
-      });
-      return config.credentials.token;
+    const token = config.credentials.token;
+    if (!token) {
+      throw new Error('Taskim adapter requires credentials.token (API key)');
     }
-
-    const response = await fetch(`${config.apiUrl}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: config.credentials.email,
-        password: config.credentials.password,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Taskim auth failed: ${error}`);
-    }
-
-    const data = (await response.json()) as { accessToken: string };
-    this.tokenCache.set(cacheKey, {
-      token: data.accessToken,
-      expiresAt: Date.now() + 3600_000,
-    });
-    return data.accessToken;
+    this.tokenCache.set(cacheKey, { token, expiresAt: Date.now() + 3600_000 });
+    return token;
   }
 
   async testConnection(
@@ -92,7 +68,26 @@ export class TaskimAdapter implements ConnectorAdapter {
     }
   }
 
-  async listRemoteProjects(
+  async listWorkspaces(config: Connector['config']): Promise<{ id: string; name: string }[]> {
+    const cfg = this.getConfig(config);
+    const token = await this.authenticate(cfg);
+    const response = await fetch(`${cfg.apiUrl}/api/v1/workspaces`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return [];
+    const data: unknown = await response.json();
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { data?: unknown[] }).data)
+        ? (data as { data: unknown[] }).data
+        : [];
+    return list.map((w) => ({
+      id: (w as { id: string }).id,
+      name: (w as { name: string }).name,
+    }));
+  }
+
+  async listProjects(
     config: Connector['config'],
   ): Promise<{ id: string; name: string }[]> {
     const cfg = this.getConfig(config);
@@ -108,6 +103,53 @@ export class TaskimAdapter implements ConnectorAdapter {
     const data = await response.json();
     const projects = Array.isArray(data) ? data : (data as any).data ?? [];
     return projects.map((p: any) => ({ id: p.id, name: p.name }));
+  }
+
+  async createWorkspace(
+    config: Connector['config'],
+    name: string,
+  ): Promise<{ id: string; name: string }> {
+    const cfg = this.getConfig(config);
+    const token = await this.authenticate(cfg);
+    const response = await fetch(`${cfg.apiUrl}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to create Taskim workspace: HTTP ${response.status}`);
+    }
+    const created: unknown = await response.json();
+    const ws = Array.isArray(created) ? created[0] : created;
+    return {
+      id: (ws as { id: string }).id,
+      name: (ws as { name: string }).name,
+    };
+  }
+
+  async createProject(
+    config: Connector['config'],
+    name: string,
+  ): Promise<{ id: string; name: string }> {
+    const cfg = this.getConfig(config);
+    if (!cfg.workspaceId) {
+      throw new Error('Cannot create a Taskim project without a workspaceId');
+    }
+    const token = await this.authenticate(cfg);
+    const response = await fetch(`${cfg.apiUrl}/api/v1/workspaces/${cfg.workspaceId}/projects`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to create Taskim project: HTTP ${response.status}`);
+    }
+    const created: unknown = await response.json();
+    const proj = Array.isArray(created) ? created[0] : created;
+    return {
+      id: (proj as { id: string }).id,
+      name: (proj as { name: string }).name,
+    };
   }
 
   async pushEpic(input: PushEpicInput, config: Connector['config']): Promise<PushEpicResult> {
