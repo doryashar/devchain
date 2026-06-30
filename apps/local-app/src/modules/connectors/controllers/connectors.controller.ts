@@ -15,6 +15,8 @@ import {
   CreateConnectorDtoSchema,
   UpdateConnectorDtoSchema,
   CreateStatusMappingDtoSchema,
+  PreviewWorkspacesDtoSchema,
+  PreviewProjectsDtoSchema,
 } from '../dtos/connector.dto';
 
 @Controller('api/connectors')
@@ -44,7 +46,21 @@ export class ConnectorsController {
         errors: parsed.error.errors,
       });
     }
-    return this.service.create(parsed.data);
+    const data = parsed.data;
+    const config = { ...data.config };
+    let externalProjectId = data.externalProjectId ?? null;
+
+    if (data.newWorkspaceName) {
+      const created = await this.taskimAdapter.createWorkspace(config, data.newWorkspaceName);
+      config.workspaceId = created.id;
+    }
+    if (data.newProjectName) {
+      const created = await this.taskimAdapter.createProject(config, data.newProjectName);
+      externalProjectId = created.id;
+    }
+
+    const { newWorkspaceName: _w, newProjectName: _p, ...rest } = data;
+    return this.service.create({ ...rest, config, externalProjectId });
   }
 
   @Put(':id')
@@ -109,5 +125,35 @@ export class ConnectorsController {
       };
     }
     return adapter.testConnection(connector.config);
+  }
+
+  @Post('taskim/preview-workspaces')
+  async previewWorkspaces(@Body() body: unknown) {
+    const parsed = PreviewWorkspacesDtoSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: parsed.error.errors,
+      });
+    }
+    const { apiUrl, apiKey } = parsed.data;
+    return this.taskimAdapter.listWorkspaces({ apiUrl, credentials: { token: apiKey } });
+  }
+
+  @Post('taskim/preview-projects')
+  async previewProjects(@Body() body: unknown) {
+    const parsed = PreviewProjectsDtoSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException({
+        message: 'Validation failed',
+        errors: parsed.error.errors,
+      });
+    }
+    const { apiUrl, apiKey, workspaceId } = parsed.data;
+    return this.taskimAdapter.listProjects({
+      apiUrl,
+      credentials: { token: apiKey },
+      workspaceId,
+    });
   }
 }
