@@ -43,7 +43,13 @@ export async function fetchConnectors(projectId: string): Promise<Connector[]> {
 }
 
 export async function createConnector(
-  data: Partial<Connector> & { projectId: string; type: string; name: string },
+  data: Partial<Connector> & {
+    projectId: string;
+    type: string;
+    name: string;
+    newWorkspaceName?: string;
+    newProjectName?: string;
+  },
 ): Promise<Connector> {
   const response = await fetch('/api/connectors', {
     method: 'POST',
@@ -77,6 +83,33 @@ export async function testConnection(
 ): Promise<{ success: boolean; error?: string }> {
   const response = await fetch(`/api/connectors/${id}/test`, { method: 'POST' });
   if (!response.ok) await throwOnError(response, 'Connection test failed');
+  return response.json();
+}
+
+export async function previewWorkspaces(input: {
+  apiUrl: string;
+  apiKey: string;
+}): Promise<{ id: string; name: string }[]> {
+  const response = await fetch('/api/connectors/taskim/preview-workspaces', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) await throwOnError(response, 'Failed to load workspaces');
+  return response.json();
+}
+
+export async function previewProjects(input: {
+  apiUrl: string;
+  apiKey: string;
+  workspaceId: string;
+}): Promise<{ id: string; name: string }[]> {
+  const response = await fetch('/api/connectors/taskim/preview-projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) await throwOnError(response, 'Failed to load projects');
   return response.json();
 }
 
