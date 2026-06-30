@@ -7,6 +7,8 @@ import {
   createConnector,
   updateConnector,
   deleteConnector,
+  previewWorkspaces,
+  previewProjects,
   type Connector,
 } from '../lib/connectors';
 import { Button } from '../components/ui/button';
@@ -79,8 +81,7 @@ export function ConnectorsPage() {
       ) : !connectors || connectors.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            No connectors configured. Click "Add Connector" to sync with an external
-            service.
+            No connectors configured. Click "Add Connector" to sync with an external service.
           </CardContent>
         </Card>
       ) : (
@@ -89,9 +90,7 @@ export function ConnectorsPage() {
             <ConnectorCard
               key={connector.id}
               connector={connector}
-              onToggle={(enabled) =>
-                toggleMutation.mutate({ id: connector.id, enabled })
-              }
+              onToggle={(enabled) => toggleMutation.mutate({ id: connector.id, enabled })}
               onDelete={() => deleteMutation.mutate(connector.id)}
             />
           ))}
@@ -139,9 +138,7 @@ function ConnectorCard({
             </div>
             <p className="text-sm text-muted-foreground">
               API: {connector.config.apiUrl}
-              {connector.externalProjectId
-                ? ` · Project: ${connector.externalProjectId}`
-                : ''}
+              {connector.externalProjectId ? ` · Project: ${connector.externalProjectId}` : ''}
             </p>
           </div>
           <div className="flex items-center gap-3 ml-4">
@@ -169,10 +166,45 @@ function CreateConnectorDialog({
   const [type, setType] = useState<'taskim' | 'monday' | 'jira'>('taskim');
   const [name, setName] = useState('');
   const [apiUrl, setApiUrl] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [connectionState, setConnectionState] = useState<
+    'idle' | 'connecting' | 'connected' | 'error'
+  >('idle');
+  const [connectionError, setConnectionError] = useState('');
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [workspaceMode, setWorkspaceMode] = useState<'select' | 'new'>('select');
   const [workspaceId, setWorkspaceId] = useState('');
-  const [externalProjectId, setExternalProjectId] = useState('');
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  const [projectMode, setProjectMode] = useState<'select' | 'new'>('select');
+  const [taskimProjectId, setTaskimProjectId] = useState('');
+  const [newProjectName, setNewProjectName] = useState('');
+
+  const handleConnect = async () => {
+    setConnectionState('connecting');
+    setConnectionError('');
+    try {
+      const ws = await previewWorkspaces({ apiUrl, apiKey });
+      setWorkspaces(ws);
+      setConnectionState('connected');
+    } catch (e) {
+      setConnectionError(e instanceof Error ? e.message : 'Connection failed');
+      setConnectionState('error');
+    }
+  };
+
+  const handleSelectWorkspace = async (id: string) => {
+    setWorkspaceId(id);
+    setProjects([]);
+    setTaskimProjectId('');
+    setProjectMode('select');
+    try {
+      const ps = await previewProjects({ apiUrl, apiKey, workspaceId: id });
+      setProjects(ps);
+    } catch {
+      setProjects([]);
+    }
+  };
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -183,10 +215,16 @@ function CreateConnectorDialog({
         enabled: false,
         config: {
           apiUrl,
-          credentials: type === 'taskim' ? { email, password } : {},
-          workspaceId: workspaceId || undefined,
+          credentials: { token: apiKey },
+          workspaceId: workspaceMode === 'select' ? workspaceId || undefined : undefined,
         },
-        externalProjectId: externalProjectId || null,
+        externalProjectId: projectMode === 'select' ? taskimProjectId || null : null,
+        ...(workspaceMode === 'new' && newWorkspaceName.trim()
+          ? { newWorkspaceName: newWorkspaceName.trim() }
+          : {}),
+        ...(projectMode === 'new' && newProjectName.trim()
+          ? { newProjectName: newProjectName.trim() }
+          : {}),
       }),
     onSuccess: () => {
       toast({ title: 'Connector created' });
@@ -195,12 +233,16 @@ function CreateConnectorDialog({
     onError: (error) => {
       toast({
         title: 'Error',
-        description:
-          error instanceof Error ? error.message : 'Failed to create connector',
+        description: error instanceof Error ? error.message : 'Failed to create connector',
         variant: 'destructive',
       });
     },
   });
+
+  const workspaceResolved = workspaceMode === 'select' ? !!workspaceId : !!newWorkspaceName.trim();
+  const projectResolved = projectMode === 'select' ? !!taskimProjectId : !!newProjectName.trim();
+  const canSubmit =
+    connectionState === 'connected' && workspaceResolved && projectResolved && !!name.trim();
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -211,7 +253,7 @@ function CreateConnectorDialog({
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label>Type</Label>
-            <Select value={type} onValueChange={(v) => setType(v as any)}>
+            <Select value={type} onValueChange={(v) => setType(v as 'taskim' | 'monday' | 'jira')}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -224,51 +266,154 @@ function CreateConnectorDialog({
           </div>
           <div className="space-y-2">
             <Label>Name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Taskim"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>API URL</Label>
-            <Input
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="http://localhost:3000"
-            />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Taskim" />
           </div>
           {type === 'taskim' && (
             <>
               <div className="space-y-2">
-                <Label>Email</Label>
+                <Label htmlFor="t-apiurl">API URL</Label>
                 <Input
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="demo@example.com"
+                  id="t-apiurl"
+                  value={apiUrl}
+                  onChange={(e) => setApiUrl(e.target.value)}
+                  placeholder="http://localhost:3000"
                 />
               </div>
               <div className="space-y-2">
-                <Label>Password</Label>
+                <Label htmlFor="t-apikey">API key</Label>
                 <Input
+                  id="t-apikey"
                   type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Taskim API key"
                 />
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleConnect}
+                disabled={!apiUrl || !apiKey || connectionState === 'connecting'}
+              >
+                {connectionState === 'connecting' ? 'Connecting…' : 'Connect'}
+              </Button>
+              {connectionState === 'error' && (
+                <p className="text-sm text-destructive">{connectionError}</p>
+              )}
+
               <div className="space-y-2">
-                <Label>Workspace ID</Label>
-                <Input
-                  value={workspaceId}
-                  onChange={(e) => setWorkspaceId(e.target.value)}
-                />
+                <Label>Workspace</Label>
+                {workspaceMode === 'select' ? (
+                  <>
+                    <Select
+                      value={workspaceId}
+                      onValueChange={handleSelectWorkspace}
+                      disabled={connectionState !== 'connected'}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select workspace" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workspaces.length === 0 && connectionState === 'connected' ? (
+                          <SelectItem value="__none" disabled>
+                            No workspaces found
+                          </SelectItem>
+                        ) : (
+                          workspaces.map((w) => (
+                            <SelectItem key={w.id} value={w.id}>
+                              {w.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0"
+                      onClick={() => setWorkspaceMode('new')}
+                    >
+                      + Create new workspace
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      value={newWorkspaceName}
+                      onChange={(e) => setNewWorkspaceName(e.target.value)}
+                      placeholder="New workspace name"
+                    />
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0"
+                      onClick={() => setWorkspaceMode('select')}
+                    >
+                      Use existing
+                    </Button>
+                  </>
+                )}
               </div>
+
               <div className="space-y-2">
-                <Label>External Project ID</Label>
-                <Input
-                  value={externalProjectId}
-                  onChange={(e) => setExternalProjectId(e.target.value)}
-                />
+                <Label>Project</Label>
+                {projectMode === 'select' && workspaceMode === 'select' ? (
+                  <>
+                    <Select
+                      value={taskimProjectId}
+                      onValueChange={setTaskimProjectId}
+                      disabled={!workspaceId}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select project" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.length === 0 && workspaceId ? (
+                          <SelectItem value="__none" disabled>
+                            No projects found
+                          </SelectItem>
+                        ) : (
+                          projects.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0"
+                      onClick={() => setProjectMode('new')}
+                    >
+                      + Create new project
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      placeholder="New project name"
+                    />
+                    {workspaceMode === 'select' && (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0"
+                        onClick={() => setProjectMode('select')}
+                      >
+                        Use existing
+                      </Button>
+                    )}
+                  </>
+                )}
               </div>
             </>
           )}
@@ -279,7 +424,7 @@ function CreateConnectorDialog({
           </Button>
           <Button
             onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending || !name || !apiUrl}
+            disabled={createMutation.isPending || !canSubmit}
           >
             {createMutation.isPending ? 'Creating...' : 'Create'}
           </Button>
