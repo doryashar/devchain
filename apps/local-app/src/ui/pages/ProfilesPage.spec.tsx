@@ -312,6 +312,19 @@ describe('ProfilesPage prompts fetch by project', () => {
         } as Response;
       }
 
+      if (url === '/api/profiles/profile-1/effective-prompt') {
+        return {
+          ok: true,
+          json: async () => ({
+            contentMd: '',
+            truncated: false,
+            maxBytes: 65536,
+            references: [],
+            unreferencedAssigned: [],
+          }),
+        } as Response;
+      }
+
       return { ok: true, json: async () => ({}) } as Response;
     });
 
@@ -395,6 +408,19 @@ describe('ProfilesPage prompts fetch by project', () => {
         } as Response;
       }
 
+      if (url === '/api/profiles/profile-1/effective-prompt') {
+        return {
+          ok: true,
+          json: async () => ({
+            contentMd: '',
+            truncated: false,
+            maxBytes: 65536,
+            references: [],
+            unreferencedAssigned: [],
+          }),
+        } as Response;
+      }
+
       if (url === '/api/provider-configs/config-1' && method === 'DELETE') {
         return { ok: true, json: async () => ({}) } as Response;
       }
@@ -421,5 +447,85 @@ describe('ProfilesPage prompts fetch by project', () => {
         method: 'DELETE',
       });
     });
+  });
+
+  it('shows the effective-prompt preview with unreferenced warning when editing a profile', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.startsWith('/api/profiles?projectId=project-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              {
+                id: 'profile-1',
+                name: 'Runner',
+                provider: null,
+                prompts: [
+                  {
+                    promptId: 'p1',
+                    order: 1,
+                    prompt: { id: 'p1', title: 'Demo', content: 'demo body' },
+                  },
+                ],
+                instructions: '[[prompt:Demo]]',
+                agentCount: 1,
+                createdAt: '',
+                updatedAt: '',
+              },
+            ],
+            total: 1,
+            limit: 1,
+            offset: 0,
+          }),
+        } as Response;
+      }
+
+      if (url === '/api/profiles/profile-1/effective-prompt') {
+        return {
+          ok: true,
+          json: async () => ({
+            contentMd: '## Prompt: Demo\n\ndemo body\n',
+            truncated: false,
+            maxBytes: 65536,
+            references: [{ title: 'Demo', resolved: true }],
+            unreferencedAssigned: [{ title: 'Orphan SOP' }],
+          }),
+        } as Response;
+      }
+
+      if (url === '/api/profiles/profile-1/provider-configs') {
+        return { ok: true, json: async () => [] } as Response;
+      }
+
+      if (url.startsWith('/api/providers')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }),
+        } as Response;
+      }
+
+      if (url.startsWith('/api/prompts?projectId=project-1')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }),
+        } as Response;
+      }
+
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    const { Wrapper } = createWrapper();
+    render(
+      <Wrapper>
+        <ProfilesPage />
+      </Wrapper>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
+
+    expect(await screen.findByText(/Effective prompt/i)).toBeInTheDocument();
+    expect(await screen.findByText('Orphan SOP')).toBeInTheDocument();
   });
 });

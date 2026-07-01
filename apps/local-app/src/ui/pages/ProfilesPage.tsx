@@ -31,7 +31,9 @@ import { cn } from '@/ui/lib/utils';
 import { EnvEditor, type EnvEditorHandle } from '@/ui/components/EnvEditor';
 import { ConfirmDialog } from '@/ui/components/shared/ConfirmDialog';
 import { MarkdownReferenceInput } from '@/ui/components/shared';
+import { EffectivePromptPreview } from '@/ui/components/EffectivePromptPreview';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
+import { useEffectivePrompt } from '@/ui/hooks/useEffectivePrompt';
 
 interface Prompt {
   id: string;
@@ -934,6 +936,7 @@ export function ProfilesPage() {
   const { selectedProjectId } = useSelectedProject();
   const [showDialog, setShowDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<AgentProfile | null>(null);
+  const effectivePrompt = useEffectivePrompt(editingProfile?.id ?? null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<AgentProfile | null>(null);
   // Note: providerId and options removed in Phase 4
   // Provider configuration now managed via ProviderConfigsSection
@@ -1427,6 +1430,20 @@ export function ProfilesPage() {
                   projectId={selectedProjectId}
                 />
               </div>
+
+              {editingProfile && (
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Effective prompt (preview)</Label>
+                  <p className="text-sm text-muted-foreground">
+                    What this profile's agent actually receives at session start — references
+                    resolved. Edit the source prompts in PromptsPage.
+                  </p>
+                  <EffectivePromptPreview
+                    data={effectivePrompt.data ?? null}
+                    isLoading={effectivePrompt.isLoading}
+                  />
+                </div>
+              )}
             </div>
 
             <DialogFooter>
