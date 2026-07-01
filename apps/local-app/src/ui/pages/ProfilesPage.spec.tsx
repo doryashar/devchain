@@ -528,4 +528,70 @@ describe('ProfilesPage prompts fetch by project', () => {
     expect(await screen.findByText(/Effective prompt/i)).toBeInTheDocument();
     expect(await screen.findByText('Orphan SOP')).toBeInTheDocument();
   });
+
+  it('clicking a profile card opens a quick view of its effective prompt', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/profiles?projectId=project-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              {
+                id: 'profile-1',
+                name: 'Runner',
+                provider: null,
+                prompts: [{ promptId: 'p1', order: 1, prompt: { id: 'p1', title: 'Demo' } }],
+                instructions: '[[prompt:Demo]]',
+                agentCount: 1,
+                createdAt: '',
+                updatedAt: '',
+              },
+            ],
+            total: 1,
+            limit: 1,
+            offset: 0,
+          }),
+        } as Response;
+      }
+      if (url === '/api/profiles/profile-1/effective-prompt') {
+        return {
+          ok: true,
+          json: async () => ({
+            contentMd: 'QUICKVIEW_BODY',
+            truncated: false,
+            maxBytes: 65536,
+            references: [{ title: 'Demo', resolved: true }],
+            unreferencedAssigned: [],
+          }),
+        } as Response;
+      }
+      if (url.startsWith('/api/providers')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }),
+        } as Response;
+      }
+      if (url.startsWith('/api/prompts?projectId=project-1')) {
+        return {
+          ok: true,
+          json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    const { Wrapper } = createWrapper();
+    render(
+      <Wrapper>
+        <ProfilesPage />
+      </Wrapper>,
+    );
+
+    fireEvent.click(await screen.findByText('Runner'));
+
+    expect(
+      await screen.findByRole('dialog', { name: /Runner.*effective prompt/i }),
+    ).toBeInTheDocument();
+  });
 });

@@ -32,6 +32,7 @@ import { EnvEditor, type EnvEditorHandle } from '@/ui/components/EnvEditor';
 import { ConfirmDialog } from '@/ui/components/shared/ConfirmDialog';
 import { MarkdownReferenceInput } from '@/ui/components/shared';
 import { EffectivePromptPreview } from '@/ui/components/EffectivePromptPreview';
+import { EffectivePromptQuickViewDialog } from '@/ui/components/EffectivePromptQuickViewDialog';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
 import { useEffectivePrompt } from '@/ui/hooks/useEffectivePrompt';
 
@@ -937,6 +938,7 @@ export function ProfilesPage() {
   const [showDialog, setShowDialog] = useState(false);
   const [editingProfile, setEditingProfile] = useState<AgentProfile | null>(null);
   const effectivePrompt = useEffectivePrompt(editingProfile?.id ?? null);
+  const [quickViewProfile, setQuickViewProfile] = useState<AgentProfile | null>(null);
   const [pendingDeleteProfile, setPendingDeleteProfile] = useState<AgentProfile | null>(null);
   // Note: providerId and options removed in Phase 4
   // Provider configuration now managed via ProviderConfigsSection
@@ -1250,7 +1252,11 @@ export function ProfilesPage() {
       {selectedProjectId && profilesData && (
         <div className="grid gap-4">
           {profilesData.items.map((profile: AgentProfile) => (
-            <div key={profile.id} className="border rounded-lg p-4 bg-card">
+            <div
+              key={profile.id}
+              className="border rounded-lg p-4 bg-card cursor-pointer hover:bg-accent/50"
+              onClick={() => setQuickViewProfile(profile)}
+            >
               <div className="flex justify-between items-start mb-3">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
@@ -1284,13 +1290,23 @@ export function ProfilesPage() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => handleEdit(profile)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEdit(profile);
+                    }}
+                  >
                     Edit
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
-                    onClick={() => handleDelete(profile)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(profile);
+                    }}
                     aria-label={`Delete profile ${profile.name}`}
                   >
                     Delete
@@ -1476,6 +1492,10 @@ export function ProfilesPage() {
         variant="destructive"
         loading={deleteMutation.isPending}
         onConfirm={handleConfirmProfileDelete}
+      />
+      <EffectivePromptQuickViewDialog
+        profile={quickViewProfile}
+        onClose={() => setQuickViewProfile(null)}
       />
     </div>
   );
