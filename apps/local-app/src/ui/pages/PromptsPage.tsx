@@ -361,7 +361,6 @@ export function PromptsPage() {
             <PromptEditorPane
               key={selectedSummary.id}
               promptId={selectedSummary.id}
-              onDeleted={() => setSelectedId(null)}
               isFullscreen={isFullscreen}
               onToggleFullscreen={() => setIsFullscreen((v) => !v)}
               onDirtyChange={(d) => {
@@ -414,7 +413,6 @@ function PromptEditorPane({
   onDirtyChange,
 }: {
   promptId: string;
-  onDeleted: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onDirtyChange: (dirty: boolean) => void;
