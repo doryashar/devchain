@@ -57,6 +57,7 @@ WORKDIR /app/apps/local-app
 ARG CLAUDE_CODE_VERSION=2.1.183
 ARG CODEX_VERSION=0.142.0
 ARG GEMINI_CLI_VERSION=0.47.0
+ARG OPENCODE_VERSION=1.17.3
 
 # Runtime system dependencies required by local-app
 RUN apt-get update \
@@ -92,10 +93,11 @@ ENV PATH=/home/node/.local/bin:${PATH}
 
 RUN su - node -c "curl -fsSL https://claude.ai/install.sh | bash -s -- ${CLAUDE_CODE_VERSION}"
 
-RUN npm install -g @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} \
+RUN npm install -g @openai/codex@${CODEX_VERSION} @google/gemini-cli@${GEMINI_CLI_VERSION} opencode-ai@${OPENCODE_VERSION} \
     && claude --version \
     && codex --version \
     && gemini --version \
+    && opencode --version \
     && docker --version \
     && docker compose version \
     && npm cache clean --force

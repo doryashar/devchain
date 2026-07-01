@@ -31,11 +31,22 @@ echo "==> Removing existing container '$CONTAINER' (if any) ..."
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 
 echo "==> Running '$CONTAINER' (mounting $PROJECTS_DIR) ..."
+
+# opencode config + auth (so the opencode CLI is configured inside the container)
+OPENCODE_MOUNTS=()
+if [ -d "$HOME/.config/opencode" ]; then
+  OPENCODE_MOUNTS+=("-v" "$HOME/.config/opencode:/home/node/.config/opencode")
+fi
+if [ -d "$HOME/.local/share/opencode" ]; then
+  OPENCODE_MOUNTS+=("-v" "$HOME/.local/share/opencode:/home/node/.local/share/opencode")
+fi
+
 docker run -d --name "$CONTAINER" \
   -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$HOME/.devchain:/home/node/.devchain" \
   -v "$PROJECTS_DIR:$PROJECTS_DIR" \
+  "${OPENCODE_MOUNTS[@]}" \
   "$IMAGE"
 
 echo "==> Done."
