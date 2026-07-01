@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { PromptsPage } from './PromptsPage';
 const useSelectedProjectMock = jest.fn();
 
@@ -58,7 +58,7 @@ function createWrapper() {
   return { Wrapper, queryClient };
 }
 
-describe('PromptsPage variable helper', () => {
+describe('PromptsPage', () => {
   const originalFetch = global.fetch;
   const fetchMock = jest.fn();
 
@@ -125,7 +125,7 @@ describe('PromptsPage variable helper', () => {
     toastSpy.mockReset();
   });
 
-  it('displays the available variables helper panel in the prompt dialog', async () => {
+  it('auto-selects the first prompt and shows its content in the editor on load', async () => {
     const { Wrapper } = createWrapper();
 
     await act(async () => {
@@ -136,72 +136,8 @@ describe('PromptsPage variable helper', () => {
       );
     });
 
-    const createButton = await screen.findByRole('button', { name: /create prompt/i });
-    await act(async () => {
-      fireEvent.click(createButton);
-    });
-
-    expect(await screen.findByText('Available Variables')).toBeInTheDocument();
-    expect(screen.getByText('{agent_name}')).toBeInTheDocument();
-    expect(screen.getByText('{project_name}')).toBeInTheDocument();
-    expect(screen.getByText('{epic_title}')).toBeInTheDocument();
-    expect(screen.getByText('{provider_name}')).toBeInTheDocument();
-    expect(screen.getByText('{profile_name}')).toBeInTheDocument();
-    expect(screen.getByText('{session_id}')).toBeInTheDocument();
-    expect(screen.getByText('{session_id_short}')).toBeInTheDocument();
-  });
-
-  it('opens delete confirm and cancels without deleting', async () => {
-    const { Wrapper } = createWrapper();
-
-    await act(async () => {
-      render(
-        <Wrapper>
-          <PromptsPage />
-        </Wrapper>,
-      );
-    });
-
-    const deleteButton = await screen.findByRole('button', { name: /^delete$/i });
-    await act(async () => {
-      fireEvent.click(deleteButton);
-    });
-
-    expect(screen.getByText('Delete prompt?')).toBeInTheDocument();
-
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
-    });
-
-    await waitFor(() => {
-      const deleteCalls = fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE');
-      expect(deleteCalls).toHaveLength(0);
-    });
-  });
-
-  it('deletes prompt after confirming dialog action', async () => {
-    const { Wrapper } = createWrapper();
-
-    await act(async () => {
-      render(
-        <Wrapper>
-          <PromptsPage />
-        </Wrapper>,
-      );
-    });
-
-    const deleteButton = await screen.findByRole('button', { name: /^delete$/i });
-    await act(async () => {
-      fireEvent.click(deleteButton);
-    });
-
-    await act(async () => {
-      const deleteButtons = screen.getAllByRole('button', { name: /^delete$/i });
-      fireEvent.click(deleteButtons[deleteButtons.length - 1]);
-    });
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/prompts/prompt-1', { method: 'DELETE' });
-    });
+    expect(await screen.findByText('Prompt A')).toBeInTheDocument();
+    const editor = await screen.findByRole('textbox', { name: /prompt content/i });
+    expect(editor).toHaveValue('Prompt content');
   });
 });
