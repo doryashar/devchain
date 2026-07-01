@@ -242,6 +242,7 @@ export function PromptsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isDirtyRef = useRef<boolean>(false);
+  const prevIdsRef = useRef<Set<string>>(new Set());
   const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
   const selectRow = (id: string) => {
     if (isDirtyRef.current) setPendingSwitchId(id);
@@ -255,12 +256,14 @@ export function PromptsPage() {
   });
 
   useEffect(() => {
-    if (!selectedId && data?.items && data.items.length > 0) {
-      setSelectedId(data.items[0].id);
+    const items = data?.items ?? [];
+    const ids = new Set(items.map((p) => p.id));
+    if (!selectedId && items.length > 0) {
+      setSelectedId(items[0].id);
+    } else if (selectedId && prevIdsRef.current.has(selectedId) && !ids.has(selectedId)) {
+      setSelectedId(items[0]?.id ?? null);
     }
-    if (selectedId && data?.items && !data.items.some((p) => p.id === selectedId)) {
-      setSelectedId(data.items[0]?.id ?? null);
-    }
+    prevIdsRef.current = ids;
   }, [data, selectedId]);
 
   const selectedSummary = data?.items?.find((p) => p.id === selectedId) ?? null;

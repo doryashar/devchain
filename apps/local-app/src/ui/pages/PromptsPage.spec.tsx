@@ -516,4 +516,73 @@ describe('PromptsPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
     await waitFor(() => expect(deletedId).toBe('prompt-1'));
   });
+
+  it('keeps the newly created prompt selected after the list refetch settles', async () => {
+    let resolveRefetch: () => void = () => {};
+    const refetchInFlight = new Promise<void>((resolve) => {
+      resolveRefetch = resolve;
+    });
+    let listCalls = 0;
+    let created = false;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'POST' && url === '/api/prompts') {
+        created = true;
+        return {
+          ok: true,
+          json: async () => ({ id: 'new-1', title: 'Untitled', content: '', version: 1, tags: [] }),
+        } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/prompt-1') {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prompt-1',
+            title: 'Prompt A',
+            content: 'Prompt content',
+            version: 1,
+            tags: [],
+          }),
+        } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/new-1') {
+        return {
+          ok: true,
+          json: async () => ({ id: 'new-1', title: 'Untitled', content: '', version: 1, tags: [] }),
+        } as Response;
+      }
+      if (url.startsWith('/api/prompts?projectId')) {
+        listCalls += 1;
+        const fresh = [
+          { id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 1, tags: [] },
+          { id: 'new-1', title: 'Untitled', contentPreview: '', version: 1, tags: [] },
+        ];
+        const stale = [
+          { id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 1, tags: [] },
+        ];
+        if (listCalls === 1) {
+          return { ok: true, json: async () => ({ items: stale }) } as Response;
+        }
+        await refetchInFlight;
+        return { ok: true, json: async () => ({ items: created ? fresh : stale }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const { Wrapper } = createWrapper();
+    await act(async () => {
+      render(
+        <Wrapper>
+          <PromptsPage />
+        </Wrapper>,
+      );
+    });
+    await screen.findByText('Prompt A');
+    await userEvent.click(screen.getByRole('button', { name: /^new$/i }));
+    await waitFor(() => expect(listCalls).toBeGreaterThanOrEqual(2));
+    resolveRefetch();
+
+    expect(await screen.findByDisplayValue('Untitled')).toBeInTheDocument();
+  });
 });
