@@ -93,6 +93,19 @@ describe('ProfilesPage update flow persists order', () => {
         return { ok: true, json: async () => [] } as Response;
       }
 
+      if (url === '/api/profiles/prof-1/effective-prompt') {
+        return {
+          ok: true,
+          json: async () => ({
+            contentMd: '',
+            truncated: false,
+            maxBytes: 65536,
+            references: [],
+            unreferencedAssigned: [],
+          }),
+        } as Response;
+      }
+
       return { ok: true, json: async () => ({}) } as Response;
     });
 
