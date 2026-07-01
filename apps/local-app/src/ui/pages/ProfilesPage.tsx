@@ -931,6 +931,23 @@ function ProviderConfigsSection({
   );
 }
 
+function extractPromptRefs(instructions: string | null | undefined): string[] {
+  if (!instructions) return [];
+  const seen = new Set<string>();
+  const refs: string[] = [];
+  const re = /\[\[prompt:([^\]]+)\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(instructions)) !== null) {
+    const title = m[1].trim();
+    const key = title.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push(title);
+    }
+  }
+  return refs;
+}
+
 export function ProfilesPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -1285,8 +1302,8 @@ export function ProfilesPage() {
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {(profile.prompts || []).length} prompt
-                    {(profile.prompts || []).length !== 1 ? 's' : ''} assigned
+                    {extractPromptRefs(profile.instructions).length} prompt
+                    {extractPromptRefs(profile.instructions).length !== 1 ? 's' : ''} assigned
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -1313,21 +1330,19 @@ export function ProfilesPage() {
                   </Button>
                 </div>
               </div>
-              {profile.prompts && profile.prompts.length > 0 && (
+              {extractPromptRefs(profile.instructions).length > 0 && (
                 <div className="mt-3 space-y-2">
-                  <p className="text-sm font-medium">Prompts (in order):</p>
+                  <p className="text-sm font-medium">Prompts:</p>
                   <div className="space-y-1">
-                    {profile.prompts
-                      .sort((a, b) => a.order - b.order)
-                      .map((pp, idx) => (
-                        <div
-                          key={pp.promptId}
-                          className="flex items-center gap-2 text-sm p-2 bg-muted/50 rounded"
-                        >
-                          <span className="text-muted-foreground">{idx + 1}.</span>
-                          <span>{pp.prompt.title}</span>
-                        </div>
-                      ))}
+                    {extractPromptRefs(profile.instructions).map((title, idx) => (
+                      <div
+                        key={title}
+                        className="flex items-center gap-2 text-sm p-2 bg-muted/50 rounded"
+                      >
+                        <span className="text-muted-foreground">{idx + 1}.</span>
+                        <span>{title}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

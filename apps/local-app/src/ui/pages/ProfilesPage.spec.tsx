@@ -594,4 +594,48 @@ describe('ProfilesPage prompts fetch by project', () => {
       await screen.findByRole('dialog', { name: /Runner.*effective prompt/i }),
     ).toBeInTheDocument();
   });
+
+  it('counts prompts referenced in instructions, not the empty junction', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('/api/profiles?projectId=project-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              {
+                id: 'profile-1',
+                name: 'Runner',
+                provider: null,
+                prompts: [],
+                instructions: '[[prompt:Worker SOP]]',
+                agentCount: 1,
+                createdAt: '',
+                updatedAt: '',
+              },
+            ],
+            total: 1,
+            limit: 1,
+            offset: 0,
+          }),
+        } as Response;
+      }
+      if (url.startsWith('/api/providers')) {
+        return { ok: true, json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }) } as Response;
+      }
+      if (url.startsWith('/api/prompts?projectId=project-1')) {
+        return { ok: true, json: async () => ({ items: [], total: 0, limit: 0, offset: 0 }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    const { Wrapper } = createWrapper();
+    render(
+      <Wrapper>
+        <ProfilesPage />
+      </Wrapper>,
+    );
+
+    expect(await screen.findByText(/1 prompt assigned/i)).toBeInTheDocument();
+  });
 });
