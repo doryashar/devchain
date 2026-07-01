@@ -410,4 +410,110 @@ describe('PromptsPage', () => {
       await screen.findByRole('dialog', { name: /discard unsaved changes/i }),
     ).toBeInTheDocument();
   });
+
+  it('creates a new prompt via + New and selects it', async () => {
+    let createCalls = 0;
+    let created = false;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'POST' && url === '/api/prompts') {
+        createCalls += 1;
+        created = true;
+        return {
+          ok: true,
+          json: async () => ({ id: 'new-1', title: 'Untitled', content: '', version: 1, tags: [] }),
+        } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/prompt-1') {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prompt-1',
+            title: 'Prompt A',
+            content: 'Prompt content',
+            version: 1,
+            tags: [],
+          }),
+        } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/new-1') {
+        return {
+          ok: true,
+          json: async () => ({ id: 'new-1', title: 'Untitled', content: '', version: 1, tags: [] }),
+        } as Response;
+      }
+      if (url.startsWith('/api/prompts?projectId')) {
+        const items = created
+          ? [
+              { id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 1, tags: [] },
+              { id: 'new-1', title: 'Untitled', contentPreview: '', version: 1, tags: [] },
+            ]
+          : [{ id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 1, tags: [] }];
+        return { ok: true, json: async () => ({ items }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const { Wrapper } = createWrapper();
+    await act(async () => {
+      render(
+        <Wrapper>
+          <PromptsPage />
+        </Wrapper>,
+      );
+    });
+    await screen.findByText('Prompt A');
+    await userEvent.click(screen.getByRole('button', { name: /^new$/i }));
+    await waitFor(() => expect(createCalls).toBe(1));
+    expect(await screen.findByDisplayValue('Untitled')).toBeInTheDocument();
+  });
+
+  it('deletes a prompt via the row delete button after confirm', async () => {
+    let deletedId = '';
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'DELETE' && url.startsWith('/api/prompts/')) {
+        deletedId = url.split('/').pop()!;
+        return { ok: true, json: async () => ({}) } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/prompt-1') {
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prompt-1',
+            title: 'Prompt A',
+            content: 'Prompt content',
+            version: 1,
+            tags: [],
+          }),
+        } as Response;
+      }
+      if (url.startsWith('/api/prompts?projectId')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 1, tags: [] },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const { Wrapper } = createWrapper();
+    await act(async () => {
+      render(
+        <Wrapper>
+          <PromptsPage />
+        </Wrapper>,
+      );
+    });
+    await screen.findByText('Prompt A');
+    await userEvent.click(screen.getByRole('button', { name: /delete prompt a/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
+    await waitFor(() => expect(deletedId).toBe('prompt-1'));
+  });
 });

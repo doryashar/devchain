@@ -237,6 +237,8 @@ export function TagInput({
 
 export function PromptsPage() {
   const { selectedProjectId } = useSelectedProject();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const isDirtyRef = useRef<boolean>(false);
@@ -263,7 +265,36 @@ export function PromptsPage() {
 
   const selectedSummary = data?.items?.find((p) => p.id === selectedId) ?? null;
 
-  const handleCreate = () => {};
+  const createMutation = useMutation({
+    mutationFn: (data: { projectId: string; title: string; content: string; tags?: string[] }) =>
+      createPrompt(data),
+    onSuccess: (created: PromptDetail) => {
+      queryClient.invalidateQueries({ queryKey: ['prompts', selectedProjectId] });
+      setSelectedId(created.id);
+      toast({ title: 'Prompt created' });
+    },
+    onError: () => toast({ title: 'Create failed', variant: 'destructive' }),
+  });
+
+  const handleCreate = () => {
+    if (!selectedProjectId) return;
+    createMutation.mutate({ projectId: selectedProjectId, title: 'Untitled', content: '' });
+  };
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deletePrompt(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts', selectedProjectId] });
+      if (pendingDeleteId === selectedId) setSelectedId(null);
+      setPendingDeleteId(null);
+      toast({ title: 'Prompt deleted' });
+    },
+    onError: () => {
+      toast({ title: 'Delete failed', variant: 'destructive' });
+      setPendingDeleteId(null);
+    },
+  });
 
   if (!selectedProjectId) {
     return (
@@ -307,6 +338,17 @@ export function PromptsPage() {
                     </div>
                   )}
                 </button>
+                <button
+                  type="button"
+                  aria-label={`delete ${p.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPendingDeleteId(p.id);
+                  }}
+                  className="text-muted-foreground hover:text-destructive mt-1 text-xs"
+                >
+                  <X className="h-3 w-3 inline" /> Delete
+                </button>
               </li>
             ))}
           </ul>
@@ -341,6 +383,21 @@ export function PromptsPage() {
         }}
         onOpenChange={(open) => {
           if (!open) setPendingSwitchId(null);
+        }}
+      />
+      <ConfirmDialog
+        open={pendingDeleteId !== null}
+        title="Delete prompt?"
+        description="This cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="destructive"
+        loading={deleteMutation.isPending}
+        onConfirm={() => {
+          if (pendingDeleteId) deleteMutation.mutate(pendingDeleteId);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null);
         }}
       />
     </div>
