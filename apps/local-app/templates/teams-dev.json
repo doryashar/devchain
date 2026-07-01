@@ -157,7 +157,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
+          "options": "--thinking --model zai-coding-plan/glm-5.2 --dangerously-skip-permissions",
           "env": null,
           "position": 5
         }
@@ -211,7 +211,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
+          "options": "--thinking --model zai-coding-plan/glm-5.2 --dangerously-skip-permissions",
           "env": null,
           "position": 4
         }
@@ -257,7 +257,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
+          "options": "--thinking --model zai-coding-plan/glm-5.2 --dangerously-skip-permissions",
           "env": null,
           "position": 4
         }
@@ -326,7 +326,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
+          "options": "--thinking --model zai-coding-plan/glm-5.2 --dangerously-skip-permissions",
           "env": null,
           "position": 5
         }
@@ -372,7 +372,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
+          "options": "--thinking --model zai-coding-plan/glm-5.2 --dangerously-skip-permissions",
           "env": null,
           "position": 4
         }
