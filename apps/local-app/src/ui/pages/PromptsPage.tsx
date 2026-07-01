@@ -8,7 +8,7 @@ import { X, Plus, Tag as TagIcon, Maximize2, Minimize2 } from 'lucide-react';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
 import { useToast } from '@/ui/hooks/use-toast';
 import { OptimisticLockError } from '@/common/errors/error-types';
-import { PageHeader, EmptyState } from '@/ui/components/shared';
+import { PageHeader, EmptyState, ConfirmDialog } from '@/ui/components/shared';
 
 interface PromptSummary {
   id: string;
@@ -239,6 +239,12 @@ export function PromptsPage() {
   const { selectedProjectId } = useSelectedProject();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const isDirtyRef = useRef<boolean>(false);
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
+  const selectRow = (id: string) => {
+    if (isDirtyRef.current) setPendingSwitchId(id);
+    else setSelectedId(id);
+  };
 
   const { data } = useQuery({
     queryKey: ['prompts', selectedProjectId],
@@ -287,7 +293,7 @@ export function PromptsPage() {
               <li key={p.id}>
                 <button
                   type="button"
-                  onClick={() => setSelectedId(p.id)}
+                  onClick={() => selectRow(p.id)}
                   className={`w-full text-left rounded-md px-2 py-2 text-sm ${p.id === selectedId ? 'bg-accent' : 'hover:bg-accent/50'}`}
                 >
                   <div className="font-medium truncate">{p.title}</div>
@@ -313,12 +319,30 @@ export function PromptsPage() {
               onDeleted={() => setSelectedId(null)}
               isFullscreen={isFullscreen}
               onToggleFullscreen={() => setIsFullscreen((v) => !v)}
+              onDirtyChange={(d) => {
+                isDirtyRef.current = d;
+              }}
             />
           ) : (
             <EmptyState title="No prompt selected" description="Create one to get started." />
           )}
         </section>
       </div>
+      <ConfirmDialog
+        open={pendingSwitchId !== null}
+        title="Discard unsaved changes?"
+        description="Switching prompts will lose your unsaved edits."
+        confirmText="Discard"
+        cancelText="Cancel"
+        onConfirm={() => {
+          isDirtyRef.current = false;
+          setSelectedId(pendingSwitchId);
+          setPendingSwitchId(null);
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingSwitchId(null);
+        }}
+      />
     </div>
   );
 }
@@ -327,11 +351,13 @@ function PromptEditorPane({
   promptId,
   isFullscreen,
   onToggleFullscreen,
+  onDirtyChange,
 }: {
   promptId: string;
   onDeleted: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  onDirtyChange: (dirty: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -356,6 +382,10 @@ function PromptEditorPane({
       JSON.stringify(draft.tags) !== JSON.stringify(detail.tags));
 
   dirtyRef.current = dirty;
+
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
 
   const updateMutation = useMutation({
     mutationFn: (data: {

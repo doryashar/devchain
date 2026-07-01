@@ -32,6 +32,7 @@ jest.mock('@/ui/components/shared/ConfirmDialog', () => ({
   ConfirmDialog: ({
     open,
     title,
+    description,
     confirmText,
     cancelText,
     onConfirm,
@@ -39,14 +40,15 @@ jest.mock('@/ui/components/shared/ConfirmDialog', () => ({
   }: {
     open: boolean;
     title: string;
+    description?: string;
     confirmText: string;
     cancelText: string;
     onConfirm: () => void;
     onOpenChange: (open: boolean) => void;
   }) =>
     open ? (
-      <div>
-        <p>{title}</p>
+      <div role="dialog" aria-label={title}>
+        <p>{description}</p>
         <button type="button" onClick={() => onOpenChange(false)}>
           {cancelText}
         </button>
@@ -359,5 +361,53 @@ describe('PromptsPage', () => {
       expect(screen.queryByRole('button', { name: /^new$/i })).not.toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /exit fullscreen/i })).toBeInTheDocument();
+  });
+
+  it('warns before switching rows when there are unsaved changes', async () => {
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      void init;
+      if (url.startsWith('/api/prompts?projectId')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: 'prompt-1', title: 'First Prompt', contentPreview: '', version: 1, tags: [] },
+              { id: 'prompt-2', title: 'Second Prompt', contentPreview: '', version: 1, tags: [] },
+            ],
+          }),
+        } as Response;
+      }
+      if (url === '/api/prompts/prompt-1' || url === '/api/prompts/prompt-2') {
+        const isFirst = url === '/api/prompts/prompt-1';
+        return {
+          ok: true,
+          json: async () => ({
+            id: isFirst ? 'prompt-1' : 'prompt-2',
+            title: isFirst ? 'First Prompt' : 'Second Prompt',
+            content: 'body',
+            version: 1,
+            tags: [],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const { Wrapper } = createWrapper();
+    await act(async () => {
+      render(
+        <Wrapper>
+          <PromptsPage />
+        </Wrapper>,
+      );
+    });
+    const editor = await screen.findByRole('textbox', { name: /prompt content/i });
+    await userEvent.clear(editor);
+    await userEvent.type(editor, 'unsaved');
+    await userEvent.click(screen.getByText('Second Prompt'));
+    expect(
+      await screen.findByRole('dialog', { name: /discard unsaved changes/i }),
+    ).toBeInTheDocument();
   });
 });
