@@ -122,7 +122,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": null,
+          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
           "env": null,
           "position": 4
         }
@@ -168,7 +168,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": null,
+          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
           "env": null,
           "position": 4
         },
@@ -241,7 +241,7 @@
           "name": "opencode",
           "providerName": "opencode",
           "description": null,
-          "options": null,
+          "options": "--thinking --model zai-coding-plan/glm-5.1 --dangerously-skip-permissions",
           "env": null,
           "position": 5
         }
