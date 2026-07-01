@@ -36,3 +36,6 @@ apps/mobile-app/ios/
 
 # Binary tarballs
 *.tgz
+
+# Git worktrees (isolated dev workspaces)
+.worktrees/
