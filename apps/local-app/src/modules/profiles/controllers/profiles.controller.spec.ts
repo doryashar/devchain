@@ -5,6 +5,8 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ValidationError, NotFoundError } from '../../../common/errors/error-types';
 import { Agent, AgentProfile, ProfileProviderConfig } from '../../storage/models/domain.models';
 import { AgentProfileWithPrompts } from '../dto';
+import { ProfileInstructionsService } from '../services/profile-instructions.service';
+import { TeamsService } from '../../teams/services/teams.service';
 jest.mock('../../../common/logging/logger', () => ({
   createLogger: () => ({ info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() }),
 }));
@@ -93,6 +95,14 @@ describe('ProfilesController', () => {
         {
           provide: STORAGE_SERVICE,
           useValue: storage,
+        },
+        {
+          provide: ProfileInstructionsService,
+          useValue: { getResolver: jest.fn() },
+        },
+        {
+          provide: TeamsService,
+          useValue: { listTeamsByAgent: jest.fn() },
         },
       ],
     }).compile();
@@ -590,5 +600,170 @@ describe('ProfilesController', () => {
       expect(storage.listAgents).not.toHaveBeenCalled();
       expect(storage.deleteAgentProfile).toHaveBeenCalledWith('profile-1');
     });
+  });
+});
+
+describe('ProfilesController - getEffectivePrompt', () => {
+  let controller: ProfilesController;
+  let storage: {
+    getAgentProfileWithPrompts: jest.Mock;
+    getProject: jest.Mock;
+    listAgents: jest.Mock;
+  };
+  let fakeResolver: { resolve: jest.Mock };
+  let profileInstructionsService: { getResolver: jest.Mock };
+  let teamsService: { listTeamsByAgent: jest.Mock };
+
+  beforeEach(async () => {
+    storage = {
+      getAgentProfileWithPrompts: jest.fn(),
+      getProject: jest.fn(),
+      listAgents: jest.fn(),
+    };
+    fakeResolver = { resolve: jest.fn() };
+    profileInstructionsService = { getResolver: jest.fn().mockReturnValue(fakeResolver) };
+    teamsService = { listTeamsByAgent: jest.fn().mockResolvedValue([]) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [ProfilesController],
+      providers: [
+        { provide: STORAGE_SERVICE, useValue: storage },
+        { provide: ProfileInstructionsService, useValue: profileInstructionsService },
+        { provide: TeamsService, useValue: teamsService },
+      ],
+    }).compile();
+    controller = module.get(ProfilesController);
+  });
+
+  const profile = {
+    id: 'profile-1',
+    projectId: 'proj-1',
+    name: 'coder',
+    instructions: '[[prompt:Worker SOP]]',
+    prompts: [
+      { promptId: 'p-1', title: 'Worker SOP', order: 1 },
+      { promptId: 'p-2', title: 'Orphan SOP', order: 2 },
+    ],
+  };
+
+  it('returns resolved contentMd and flags unreferenced assigned prompts', async () => {
+    storage.getAgentProfileWithPrompts.mockResolvedValue(profile);
+    storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'My Project' });
+    storage.listAgents.mockResolvedValue({
+      items: [{ id: 'a-1', name: 'Coder', profileId: 'profile-1' }],
+    });
+    fakeResolver.resolve.mockResolvedValue({
+      contentMd: '## Prompt: Worker SOP\n\ndo work\n---\n',
+      bytes: 100,
+      truncated: false,
+      docs: [],
+      prompts: [{ id: 'p-1', title: 'Worker SOP' }],
+    });
+
+    const result = await controller.getEffectivePrompt('profile-1');
+
+    expect(result.contentMd).toBe('## Prompt: Worker SOP\n\ndo work\n---\n');
+    expect(result.truncated).toBe(false);
+    expect(result.maxBytes).toBe(64 * 1024);
+    expect(result.references).toEqual([{ title: 'Worker SOP', resolved: true }]);
+    expect(result.unreferencedAssigned).toEqual([{ title: 'Orphan SOP' }]);
+    expect(fakeResolver.resolve).toHaveBeenCalledWith(
+      'proj-1',
+      '[[prompt:Worker SOP]]',
+      expect.objectContaining({
+        render: expect.objectContaining({
+          vars: expect.objectContaining({ agent_name: 'Coder', project_name: 'My Project' }),
+        }),
+      }),
+    );
+  });
+
+  it('falls back to profile name when no agent uses the profile', async () => {
+    storage.getAgentProfileWithPrompts.mockResolvedValue(profile);
+    storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'My Project' });
+    storage.listAgents.mockResolvedValue({ items: [] });
+    fakeResolver.resolve.mockResolvedValue({
+      contentMd: '',
+      bytes: 0,
+      truncated: false,
+      docs: [],
+      prompts: [{ id: 'p-1', title: 'Worker SOP' }],
+    });
+
+    await controller.getEffectivePrompt('profile-1');
+
+    expect(fakeResolver.resolve).toHaveBeenCalledWith(
+      'proj-1',
+      '[[prompt:Worker SOP]]',
+      expect.objectContaining({
+        render: expect.objectContaining({ vars: expect.objectContaining({ agent_name: 'coder' }) }),
+      }),
+    );
+  });
+
+  it('marks a missing inline reference as resolved=false', async () => {
+    storage.getAgentProfileWithPrompts.mockResolvedValue({
+      ...profile,
+      instructions: '[[prompt:Missing SOP]]',
+      prompts: [],
+    });
+    storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'P' });
+    storage.listAgents.mockResolvedValue({ items: [] });
+    fakeResolver.resolve.mockResolvedValue({
+      contentMd: '',
+      bytes: 0,
+      truncated: false,
+      docs: [],
+      prompts: [],
+    });
+
+    const result = await controller.getEffectivePrompt('profile-1');
+
+    expect(result.references).toEqual([{ title: 'Missing SOP', resolved: false }]);
+    expect(result.unreferencedAssigned).toEqual([]);
+  });
+
+  it('reports truncated=true and passes maxBytes to the resolver', async () => {
+    storage.getAgentProfileWithPrompts.mockResolvedValue(profile);
+    storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'P' });
+    storage.listAgents.mockResolvedValue({ items: [] });
+    fakeResolver.resolve.mockResolvedValue({
+      contentMd: 'x'.repeat(100),
+      bytes: 64 * 1024,
+      truncated: true,
+      docs: [],
+      prompts: [{ id: 'p-1', title: 'Worker SOP' }],
+    });
+
+    const result = await controller.getEffectivePrompt('profile-1');
+
+    expect(result.truncated).toBe(true);
+    expect(fakeResolver.resolve).toHaveBeenCalledWith(
+      'proj-1',
+      '[[prompt:Worker SOP]]',
+      expect.objectContaining({ maxBytes: 64 * 1024 }),
+    );
+  });
+
+  it('returns empty contentMd for a profile with no instructions', async () => {
+    storage.getAgentProfileWithPrompts.mockResolvedValue({
+      ...profile,
+      instructions: null,
+      prompts: [],
+    });
+    storage.getProject.mockResolvedValue({ id: 'proj-1', name: 'P' });
+    storage.listAgents.mockResolvedValue({ items: [] });
+    fakeResolver.resolve.mockResolvedValue({
+      contentMd: '',
+      bytes: 0,
+      truncated: false,
+      docs: [],
+      prompts: [],
+    });
+
+    const result = await controller.getEffectivePrompt('profile-1');
+
+    expect(result.contentMd).toBe('');
+    expect(result.references).toEqual([]);
   });
 });

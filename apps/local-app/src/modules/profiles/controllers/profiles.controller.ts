@@ -28,8 +28,28 @@ import {
   ReorderProviderConfigsSchema,
 } from '../dto';
 import { ValidationError } from '../../../common/errors/error-types';
+import { ServiceUnavailableError } from '../../../common/errors/service-unavailable.error';
+import { ProfileInstructionsService } from '../services/profile-instructions.service';
+import { TeamsService } from '../../teams/services/teams.service';
+import { loadAgentRecipientContext } from '../../../common/template/agent-recipient-context';
 
 const logger = createLogger('ProfilesController');
+
+export interface EffectivePromptReference {
+  title: string;
+  resolved: boolean;
+}
+
+export interface EffectivePromptResponse {
+  contentMd: string;
+  truncated: boolean;
+  maxBytes: number;
+  references: EffectivePromptReference[];
+  unreferencedAssigned: { title: string }[];
+}
+
+const EFFECTIVE_PROMPT_MAX_BYTES = 64 * 1024;
+const PROMPT_REF_PATTERN = /\[\[prompt:([^\]]+)\]\]/gi;
 
 // Note: providerId and options removed in Phase 4
 // Provider configuration now lives in ProfileProviderConfig (created separately)
@@ -63,7 +83,11 @@ const ReplacePromptsSchema = z.object({
 
 @Controller('api/profiles')
 export class ProfilesController {
-  constructor(@Inject(STORAGE_SERVICE) private readonly storage: StorageService) {}
+  constructor(
+    @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+    private readonly profileInstructions: ProfileInstructionsService,
+    private readonly teamsService: TeamsService,
+  ) {}
 
   @Get()
   async listProfiles(@Query('projectId') projectId?: string) {
@@ -291,5 +315,64 @@ export class ProfilesController {
     await this.storage.reorderProfileProviderConfigs(profileId, configIds);
 
     return { success: true };
+  }
+
+  @Get(':id/effective-prompt')
+  async getEffectivePrompt(@Param('id') id: string): Promise<EffectivePromptResponse> {
+    logger.info({ id }, 'GET /api/profiles/:id/effective-prompt');
+
+    const profile = await this.storage.getAgentProfileWithPrompts(id);
+    const projectId = profile.projectId!;
+    const project = await this.storage.getProject(projectId);
+    const instructions = profile.instructions ?? null;
+
+    const agents = await this.storage.listAgents(projectId);
+    const agent = agents.items.find((a) => a.profileId === id) ?? null;
+
+    let teamCtx = { team_name: '', team_names: '', is_team_lead: false };
+    if (agent) {
+      try {
+        teamCtx = await loadAgentRecipientContext(this.teamsService, agent.id);
+      } catch (error) {
+        if (!(error instanceof ServiceUnavailableError)) throw error;
+      }
+    }
+    const renderVars: Record<string, unknown> = {
+      agent_name: agent?.name ?? profile.name,
+      project_name: project.name,
+      ...teamCtx,
+    };
+
+    const resolver = this.profileInstructions.getResolver();
+    const resolved = await resolver.resolve(projectId, instructions, {
+      maxBytes: EFFECTIVE_PROMPT_MAX_BYTES,
+      render: { vars: renderVars, legacyVariables: Object.keys(renderVars) },
+    });
+
+    const inlineTitles: string[] = [];
+    if (instructions) {
+      let m: RegExpExecArray | null;
+      PROMPT_REF_PATTERN.lastIndex = 0;
+      while ((m = PROMPT_REF_PATTERN.exec(instructions)) !== null) {
+        inlineTitles.push(m[1]);
+      }
+    }
+    const resolvedTitles = new Set((resolved?.prompts ?? []).map((p) => p.title.toLowerCase()));
+    const references: EffectivePromptReference[] = inlineTitles
+      .filter((title, idx) => inlineTitles.indexOf(title) === idx)
+      .map((title) => ({ title, resolved: resolvedTitles.has(title.toLowerCase()) }));
+
+    const inlineLower = new Set(inlineTitles.map((t) => t.toLowerCase()));
+    const unreferencedAssigned = (profile.prompts ?? [])
+      .filter((p) => !inlineLower.has(p.title.toLowerCase()))
+      .map((p) => ({ title: p.title }));
+
+    return {
+      contentMd: resolved?.contentMd ?? '',
+      truncated: resolved?.truncated ?? false,
+      maxBytes: EFFECTIVE_PROMPT_MAX_BYTES,
+      references,
+      unreferencedAssigned,
+    };
   }
 }
