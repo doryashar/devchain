@@ -58,35 +58,42 @@ describe('OpencodeAdapter', () => {
   });
 
   describe('buildLaunchArgs', () => {
-    it('returns profileOptionArgs unchanged for mode new', () => {
+    const defaultArgs = [
+      '--thinking',
+      '--model',
+      'zai-coding-plan/glm-5.1',
+      '--dangerously-skip-permissions',
+    ];
+
+    it('prepends default opencode flags for mode new', () => {
+      const result = adapter.buildLaunchArgs({ mode: 'new', profileOptionArgs: [] });
+      expect(result.argv).toEqual(defaultArgs);
+    });
+
+    it('appends profileOptionArgs after the defaults for mode new', () => {
       const result = adapter.buildLaunchArgs({
         mode: 'new',
-        profileOptionArgs: ['--model', 'gpt-4o'],
+        profileOptionArgs: ['--config', 'x'],
       });
-      expect(result.argv).toEqual(['--model', 'gpt-4o']);
+      expect(result.argv).toEqual([...defaultArgs, '--config', 'x']);
     });
 
-    it('returns empty argv for mode new with no profileOptionArgs', () => {
-      const result = adapter.buildLaunchArgs({ mode: 'new', profileOptionArgs: [] });
-      expect(result.argv).toEqual([]);
-    });
-
-    it('prepends --session and providerSessionId for mode restore', () => {
+    it('prepends --session + defaults for mode restore', () => {
       const result = adapter.buildLaunchArgs({
         mode: 'restore',
         providerSessionId: 'session-abc',
-        profileOptionArgs: ['--model', 'gpt-4o'],
+        profileOptionArgs: ['--config', 'x'],
       });
-      expect(result.argv).toEqual(['--session', 'session-abc', '--model', 'gpt-4o']);
+      expect(result.argv).toEqual(['--session', 'session-abc', ...defaultArgs, '--config', 'x']);
     });
 
-    it('restore with no profileOptionArgs yields [--session, sessionId]', () => {
+    it('restore with no profileOptionArgs yields --session + defaults', () => {
       const result = adapter.buildLaunchArgs({
         mode: 'restore',
         providerSessionId: 'abc',
         profileOptionArgs: [],
       });
-      expect(result.argv).toEqual(['--session', 'abc']);
+      expect(result.argv).toEqual(['--session', 'abc', ...defaultArgs]);
     });
   });
 

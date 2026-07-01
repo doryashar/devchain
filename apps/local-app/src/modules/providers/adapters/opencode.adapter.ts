@@ -47,10 +47,16 @@ export class OpencodeAdapter implements ProviderAdapter {
   buildLaunchArgs({ mode, providerSessionId, profileOptionArgs }: BuildLaunchArgsInput): {
     argv: string[];
   } {
+    const defaultArgs = [
+      '--thinking',
+      '--model',
+      'zai-coding-plan/glm-5.1',
+      '--dangerously-skip-permissions',
+    ];
     if (mode === 'restore') {
-      return { argv: ['--session', providerSessionId!, ...profileOptionArgs] };
+      return { argv: ['--session', providerSessionId!, ...defaultArgs, ...profileOptionArgs] };
     }
-    return { argv: [...profileOptionArgs] };
+    return { argv: [...defaultArgs, ...profileOptionArgs] };
   }
 
   parseListOutput(_stdout: string, _stderr?: string): McpServerEntry[] {
