@@ -4,7 +4,7 @@ import { Button } from '@/ui/components/ui/button';
 import { Input } from '@/ui/components/ui/input';
 import { Textarea } from '@/ui/components/ui/textarea';
 import { Badge } from '@/ui/components/ui/badge';
-import { X, Plus, Tag as TagIcon, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Plus, Tag as TagIcon, Maximize2, Minimize2, Trash2 } from 'lucide-react';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
 import { useToast } from '@/ui/hooks/use-toast';
 import { OptimisticLockError } from '@/common/errors/error-types';
@@ -324,11 +324,23 @@ export function PromptsPage() {
           </Button>
           <ul className="space-y-1">
             {data?.items?.map((p) => (
-              <li key={p.id}>
+              <li key={p.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={`delete ${p.title}`}
+                  title="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPendingDeleteId(p.id);
+                  }}
+                  className="shrink-0 p-1.5 rounded-md text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => selectRow(p.id)}
-                  className={`w-full text-left rounded-md px-2 py-2 text-sm ${p.id === selectedId ? 'bg-accent' : 'hover:bg-accent/50'}`}
+                  className={`flex-1 min-w-0 text-left rounded-md px-2 py-2 text-sm ${p.id === selectedId ? 'bg-accent' : 'hover:bg-accent/50'}`}
                 >
                   <div className="font-medium truncate">{p.title}</div>
                   {p.tags?.length > 0 && (
@@ -340,17 +352,6 @@ export function PromptsPage() {
                       ))}
                     </div>
                   )}
-                </button>
-                <button
-                  type="button"
-                  aria-label={`delete ${p.title}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPendingDeleteId(p.id);
-                  }}
-                  className="text-muted-foreground hover:text-destructive mt-1 text-xs"
-                >
-                  <X className="h-3 w-3 inline" /> Delete
                 </button>
               </li>
             ))}
