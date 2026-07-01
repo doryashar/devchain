@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/ui/components/ui/button';
 import { Input } from '@/ui/components/ui/input';
@@ -60,16 +60,6 @@ export async function createPrompt(data: {
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to create prompt');
-  return res.json();
-}
-
-export async function updatePrompt(id: string, data: Partial<PromptDetail>) {
-  const res = await fetch(`/api/prompts/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error('Failed to update prompt');
   return res.json();
 }
 
@@ -352,8 +342,10 @@ function PromptEditorPane({
   });
 
   const [draft, setDraft] = useState<PromptDetail | null>(null);
+  const dirtyRef = useRef(false);
+
   useEffect(() => {
-    if (detail) setDraft(detail);
+    if (detail && !dirtyRef.current) setDraft(detail);
   }, [detail, promptId]);
 
   const dirty =
@@ -362,6 +354,8 @@ function PromptEditorPane({
     (draft.title !== detail.title ||
       draft.content !== detail.content ||
       JSON.stringify(draft.tags) !== JSON.stringify(detail.tags));
+
+  dirtyRef.current = dirty;
 
   const updateMutation = useMutation({
     mutationFn: (data: {
@@ -393,7 +387,7 @@ function PromptEditorPane({
   if (!draft) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
   const save = () => {
-    const version = detail?.version ?? draft.version;
+    const version = draft.version;
     updateMutation.mutate({
       id: promptId,
       payload: { title: draft.title, content: draft.content, tags: draft.tags, version },
@@ -428,7 +422,6 @@ function PromptEditorPane({
         suggestions={[]}
         onAddTag={(t) => setDraft({ ...draft, tags: [...draft.tags, t] })}
         onRemoveTag={(t) => setDraft({ ...draft, tags: draft.tags.filter((x) => x !== t) })}
-        onInputChange={() => {}}
       />
 
       <Textarea

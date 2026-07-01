@@ -274,6 +274,76 @@ describe('PromptsPage', () => {
     expect(editor).toHaveValue('my local edit');
   });
 
+  it('after a 409, retry sends the bumped version', async () => {
+    let getVersion = 5;
+    const putVersions: number[] = [];
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.startsWith('/api/prompts?projectId')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [
+              { id: 'prompt-1', title: 'Prompt A', contentPreview: '', version: 5, tags: ['ops'] },
+            ],
+          }),
+        } as Response;
+      }
+      if (method === 'GET' && url === '/api/prompts/prompt-1') {
+        const v = getVersion;
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prompt-1',
+            title: 'Prompt A',
+            content: 'Prompt content',
+            version: v,
+            tags: ['ops'],
+          }),
+        } as Response;
+      }
+      if (method === 'PUT' && url === '/api/prompts/prompt-1') {
+        putVersions.push(JSON.parse(init!.body as string).version);
+        if (putVersions.length === 1) {
+          getVersion = 6;
+          return {
+            ok: false,
+            status: 409,
+            json: async () => ({ code: 'optimistic_lock_error' }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            id: 'prompt-1',
+            title: 'Prompt A',
+            content: 'my local edit',
+            version: 6,
+            tags: ['ops'],
+          }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const { Wrapper } = createWrapper();
+    await act(async () => {
+      render(
+        <Wrapper>
+          <PromptsPage />
+        </Wrapper>,
+      );
+    });
+    const editor = await screen.findByRole('textbox', { name: /prompt content/i });
+    await userEvent.clear(editor);
+    await userEvent.type(editor, 'my local edit');
+    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+    await screen.findByText(/Someone else edited/i);
+    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(putVersions).toEqual([5, 6]));
+  });
+
   it('fullscreen toggle hides the left rail', async () => {
     const { Wrapper } = createWrapper();
     await act(async () => {
