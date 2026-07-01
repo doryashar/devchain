@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/ui/components/ui/button';
+import { Input } from '@/ui/components/ui/input';
 import { Textarea } from '@/ui/components/ui/textarea';
 import { Badge } from '@/ui/components/ui/badge';
-import { X, Plus, Tag as TagIcon } from 'lucide-react';
+import { X, Plus, Tag as TagIcon, Maximize2, Minimize2 } from 'lucide-react';
 import { useSelectedProject } from '@/ui/hooks/useProjectSelection';
+import { useToast } from '@/ui/hooks/use-toast';
+import { OptimisticLockError } from '@/common/errors/error-types';
 import { PageHeader, EmptyState } from '@/ui/components/shared';
 
 interface PromptSummary {
@@ -78,6 +81,21 @@ export async function deletePrompt(id: string) {
 async function fetchPromptDetail(id: string): Promise<PromptDetail> {
   const res = await fetch(`/api/prompts/${id}`);
   if (!res.ok) throw new Error('Failed to fetch prompt');
+  return res.json();
+}
+
+async function updatePromptVersioned(
+  id: string,
+  data: Partial<PromptDetail>,
+  version: number,
+): Promise<PromptDetail> {
+  const res = await fetch(`/api/prompts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...data, version }),
+  });
+  if (res.status === 409) throw new OptimisticLockError('Prompt', id);
+  if (!res.ok) throw new Error('Failed to update prompt');
   return res.json();
 }
 
@@ -268,6 +286,7 @@ export function PromptsPage() {
       <PageHeader title="Prompts" description="Manage reusable prompt content." />
       <div className="flex-1 min-h-0 flex gap-4">
         <aside
+          hidden={isFullscreen}
           className={`shrink-0 border-r pr-2 overflow-y-auto ${isFullscreen ? 'hidden' : 'w-[280px]'}`}
         >
           <Button className="w-full mb-3" onClick={() => handleCreate()} size="sm">
@@ -316,23 +335,133 @@ export function PromptsPage() {
 
 function PromptEditorPane({
   promptId,
+  isFullscreen,
+  onToggleFullscreen,
 }: {
   promptId: string;
   onDeleted: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
   const { data: detail } = useQuery({
     queryKey: ['prompt', promptId],
     queryFn: () => fetchPromptDetail(promptId),
   });
-  if (!detail) return <p className="text-sm text-muted-foreground">Loading…</p>;
+
+  const [draft, setDraft] = useState<PromptDetail | null>(null);
+  useEffect(() => {
+    if (detail) setDraft(detail);
+  }, [detail, promptId]);
+
+  const dirty =
+    draft != null &&
+    detail != null &&
+    (draft.title !== detail.title ||
+      draft.content !== detail.content ||
+      JSON.stringify(draft.tags) !== JSON.stringify(detail.tags));
+
+  const updateMutation = useMutation({
+    mutationFn: (data: {
+      id: string;
+      payload: Partial<PromptDetail> & { version: number };
+      version: number;
+    }) => updatePromptVersioned(data.id, data.payload, data.version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['prompts'] });
+      queryClient.invalidateQueries({ queryKey: ['prompt', promptId] });
+      toast({ title: 'Saved' });
+    },
+    onError: async (error: unknown) => {
+      if (error instanceof OptimisticLockError) {
+        toast({
+          title: 'Someone else edited this prompt. Refetched. Your edits are preserved.',
+          variant: 'destructive',
+        });
+        const fresh = await fetchPromptDetail(promptId);
+        setDraft((prev) =>
+          prev ? { ...fresh, content: prev.content, title: prev.title, tags: prev.tags } : fresh,
+        );
+        return;
+      }
+      toast({ title: 'Save failed', variant: 'destructive' });
+    },
+  });
+
+  if (!draft) return <p className="text-sm text-muted-foreground">Loading…</p>;
+
+  const save = () => {
+    const version = detail?.version ?? draft.version;
+    updateMutation.mutate({
+      id: promptId,
+      payload: { title: draft.title, content: draft.content, tags: draft.tags, version },
+      version,
+    });
+  };
+  const discard = () => {
+    if (detail) setDraft(detail);
+  };
+
   return (
-    <Textarea
-      value={detail.content}
-      readOnly
-      aria-label="Prompt content"
-      className="flex-1 min-h-0 font-mono"
-    />
+    <div className="flex flex-col h-full gap-3">
+      <div className="flex items-center gap-2">
+        <Input
+          value={draft.title}
+          onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+          className="flex-1"
+          aria-label="Prompt title"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleFullscreen}
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+        >
+          {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </Button>
+      </div>
+
+      <TagInput
+        tags={draft.tags}
+        suggestions={[]}
+        onAddTag={(t) => setDraft({ ...draft, tags: [...draft.tags, t] })}
+        onRemoveTag={(t) => setDraft({ ...draft, tags: draft.tags.filter((x) => x !== t) })}
+        onInputChange={() => {}}
+      />
+
+      <Textarea
+        value={draft.content}
+        onChange={(e) => setDraft({ ...draft, content: e.target.value })}
+        className="flex-1 min-h-0 font-mono"
+        aria-label="Prompt content"
+      />
+
+      {isFullscreen && (
+        <aside className="text-xs text-muted-foreground border-t pt-2">
+          <p className="font-medium mb-1">Variables</p>
+          <ul className="grid grid-cols-2 gap-x-4">
+            {PROMPT_VARIABLES.map((v) => (
+              <li key={v.token}>
+                <code>{v.token}</code> — {v.description}
+              </li>
+            ))}
+          </ul>
+        </aside>
+      )}
+
+      <div className="flex items-center justify-end gap-2">
+        {dirty && (
+          <span className="h-2 w-2 rounded-full bg-yellow-500" aria-label="unsaved changes" />
+        )}
+        <Button variant="ghost" onClick={discard} disabled={!dirty}>
+          Discard
+        </Button>
+        <Button onClick={save} disabled={!dirty || updateMutation.isPending}>
+          {updateMutation.isPending ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </div>
   );
 }
