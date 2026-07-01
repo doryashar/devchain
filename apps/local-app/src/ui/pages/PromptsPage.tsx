@@ -39,7 +39,7 @@ export const PROMPT_VARIABLES = [
   { token: '{session_id_short}', description: '8-char session ID prefix for MCP tools' },
 ];
 
-async function fetchPrompts(projectId: string) {
+async function fetchPrompts(projectId: string): Promise<PromptsQueryData> {
   const res = await fetch(`/api/prompts?projectId=${encodeURIComponent(projectId)}`);
   if (!res.ok) throw new Error('Failed to fetch prompts');
   return res.json();
