@@ -96,7 +96,7 @@ describe('shipped template default agents', () => {
       const profile = (teamsDev.template as any).profiles.find((p: any) => p.name === 'Dispatcher');
       expect(profile).toBeDefined();
       expect(profile.familySlug).toBe('dispatcher');
-      expect(profile.instructions).toContain('Dispatcher — Intake & Triage SOP');
+      expect(profile.instructions).toBe('[[prompt:Dispatcher — Intake & Triage SOP]]');
       const prompt = (teamsDev.template as any).prompts.find((p: any) => p.title === 'Dispatcher — Intake & Triage SOP');
       expect(prompt).toBeDefined();
       const teams = (teamsDev.template as any).teams ?? [];
@@ -111,6 +111,34 @@ describe('shipped template default agents', () => {
       const dispatchRule = rules.find((r: any) =>
         r.matchType === 'status' && r.statusLabel === 'Dispatch' && r.targetType === 'agent' && r.targetAgentName === 'Dispatcher');
       expect(dispatchRule).toBeDefined();
+    });
+
+    it('every preset agentConfig references a providerConfig that exists on the agent profile', () => {
+      const t = teamsDev.template as any;
+      const profilesById = new Map((t.profiles as any[]).map((p) => [p.id, p]));
+      for (const preset of t.presets ?? []) {
+        for (const cfg of preset.agentConfigs) {
+          const agent = (t.agents as any[]).find((a) => a.name === cfg.agentName);
+          if (!agent) throw new Error(`agent ${cfg.agentName} not found (preset "${preset.name}")`);
+          const profile = profilesById.get(agent.profileId);
+          if (!profile)
+            throw new Error(`profile for ${cfg.agentName} not found (preset "${preset.name}")`);
+          const configNames = (profile.providerConfigs as any[]).map((c) => c.name);
+          if (!configNames.includes(cfg.providerConfigName)) {
+            throw new Error(
+              `preset "${preset.name}" references "${cfg.providerConfigName}" for ${cfg.agentName}, ` +
+                `available: [${configNames.join(', ')}]`,
+            );
+          }
+        }
+      }
+    });
+
+    it('has statuses with contiguous positions starting at 0, no gaps or duplicates', () => {
+      const positions = ((teamsDev.template as any).statuses as any[])
+        .map((s) => s.position)
+        .sort((a, b) => a - b);
+      expect(positions).toEqual(positions.map((_, i) => i));
     });
   });
 });
