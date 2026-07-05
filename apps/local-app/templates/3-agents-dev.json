@@ -254,24 +254,24 @@
       "name": "Brainstormer",
       "profileId": "41484055-946f-4dbf-abe5-fc7089c3e8c7",
       "description": "responsible for plan decomposition and epic creation",
-      "modelOverride": null,
-      "providerConfigName": "opus"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     },
     {
       "id": "171feb9c-1587-4ce4-990a-f3111b1b8a7e",
       "name": "Coder",
       "profileId": "77a1784f-41e4-4076-9f5b-cc40287cd8e8",
       "description": "Executes sub-epics sequentially, self-manages task flow, and triggers code review when all tasks are complete",
-      "modelOverride": "sonnet",
-      "providerConfigName": "opus"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     },
     {
       "id": "6cf50e1b-81dc-48bb-a594-67adcec08783",
       "name": "Code Reviewer",
       "profileId": "447fffbc-e312-4ca1-a870-2f969ea1ce2f",
       "description": "responsible for code review of completed phases",
-      "modelOverride": null,
-      "providerConfigName": "gpt-high"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     }
   ],
   "statuses": [

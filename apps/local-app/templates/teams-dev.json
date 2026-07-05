@@ -385,32 +385,32 @@
       "name": "Brainstormer",
       "profileId": "632616d8-f705-4c45-9e51-9a52d4ba3faa",
       "description": "responsible for plan decomposition and epic creation",
-      "modelOverride": null,
-      "providerConfigName": "opus"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     },
     {
       "id": "6099fb2e-6bb4-42de-b41b-c1a36e51935b",
       "name": "Epic Manager",
       "profileId": "32ff191e-b9ef-496e-9908-200a79cb4931",
       "description": null,
-      "modelOverride": "sonnet",
-      "providerConfigName": "opus"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     },
     {
       "id": "df7133b8-3bbc-437d-83ce-7d4115bfd8ce",
       "name": "Architect",
       "profileId": "3d303de3-8250-49f9-8ed1-4298d1c79a41",
       "description": null,
-      "modelOverride": null,
-      "providerConfigName": "gpt-high"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     },
     {
       "id": "0c5fee68-6c53-46db-86a6-fe3469dfd217",
       "name": "Code Reviewer",
       "profileId": "f84085fb-1e46-4c74-b49b-537ca193d24f",
       "description": "responsible for code review of completed phases",
-      "modelOverride": null,
-      "providerConfigName": "gpt-high"
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     }
   ],
   "statuses": [
