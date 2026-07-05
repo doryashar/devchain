@@ -90,7 +90,7 @@ export async function exportProjectWithHelper(
   const providerModels = await buildProviderModels(profileContext.providersMap, deps.storage);
   const teams = deps.teamsService ? await buildExportTeams(state.project, deps) : [];
   const scheduledEpics = await buildExportScheduledEpics(projectId, state, deps.storage);
-  const autoAssignRules = await buildExportAutoAssignRules(projectId, deps);
+  const autoAssignRules = await buildExportAutoAssignRules(projectId, state, deps);
 
   const manifest = buildManifest(
     state.project,
@@ -651,20 +651,18 @@ async function buildExportScheduledEpics(
 
 async function buildExportAutoAssignRules(
   projectId: string,
+  state: ExportState,
   deps: ExportProjectDeps,
-): Promise<unknown[]> {
+) {
   const rules = await deps.storage.listEpicAssignmentRules(projectId);
   if (rules.length === 0) return [];
 
-  const { items: statuses } = await deps.storage.listStatuses(projectId);
-  const statusIdToLabel = new Map(statuses.map((s) => [s.id, s.label]));
-
-  const { items: agents } = await deps.storage.listAgents(projectId);
-  const agentIdToName = new Map(agents.map((a) => [a.id, a.name]));
+  const statusIdToLabel = new Map(state.statusesRes.items.map((s) => [s.id, s.label]));
+  const agentIdToName = new Map(state.agentsRes.items.map((a) => [a.id, a.name]));
 
   const teamIdToName = new Map<string, string>();
   if (deps.teamsService) {
-    const teamsResult = await deps.teamsService.listTeams(projectId);
+    const teamsResult = await deps.teamsService.listTeams(projectId, { limit: 10000 });
     const teams = Array.isArray(teamsResult) ? teamsResult : teamsResult.items;
     for (const t of teams) teamIdToName.set(t.id, t.name);
   }

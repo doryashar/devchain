@@ -98,6 +98,12 @@ describe('ProjectsService', () => {
     hasTemplate: jest.Mock;
     getTemplateFromFilePath: jest.Mock;
   };
+  let teamsServiceMock: {
+    deleteTeamsByProject: jest.Mock;
+    listTeams: jest.Mock;
+    getTeam: jest.Mock;
+    createTeam: jest.Mock;
+  };
 
   beforeEach(async () => {
     storage = {
@@ -221,7 +227,7 @@ describe('ProjectsService', () => {
         },
         {
           provide: TeamsService,
-          useValue: {
+          useValue: (teamsServiceMock = {
             deleteTeamsByProject: jest.fn().mockResolvedValue(undefined),
             listTeams: jest.fn().mockResolvedValue({ items: [] }),
             getTeam: jest.fn().mockResolvedValue(null),
@@ -229,7 +235,7 @@ describe('ProjectsService', () => {
               id: `team-${Date.now()}`,
               ...data,
             })),
-          },
+          }),
         },
         {
           provide: ProjectProviderProvisioningService,
@@ -1669,6 +1675,85 @@ describe('ProjectsService', () => {
           targetAgentName: 'Dispatcher',
           overrideExisting: false,
           enabled: true,
+        }),
+      );
+    });
+
+    it('maps unknown status/agent ids to null (stale references)', async () => {
+      storage.listStatuses.mockResolvedValue({
+        items: [{ id: 'status-dispatch', label: 'Dispatch', color: '#17a2b8', position: 1 }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+      storage.listAgents.mockResolvedValue({
+        items: [{ id: 'agent-dispatcher', name: 'Dispatcher', profileId: 'p-1' }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+      storage.listEpicAssignmentRules.mockResolvedValue([
+        {
+          id: 'rule-stale',
+          projectId,
+          matchType: 'status',
+          statusId: 'deleted-status', // not in statuses
+          tags: null,
+          targetType: 'agent',
+          targetAgentId: 'deleted-agent', // not in agents
+          targetTeamId: null,
+          overrideExisting: false,
+          priority: 0,
+          enabled: true,
+          createdAt: '2026-07-05T00:00:00Z',
+          updatedAt: '2026-07-05T00:00:00Z',
+        },
+      ]);
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.autoAssignRules).toHaveLength(1);
+      expect(result.autoAssignRules[0]).toEqual(
+        expect.objectContaining({ statusLabel: null, targetAgentName: null }),
+      );
+    });
+
+    it('exports a tag→team rule with team name and non-null tags', async () => {
+      storage.listStatuses.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.listAgents.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.listEpicAssignmentRules.mockResolvedValue([
+        {
+          id: 'rule-team',
+          projectId,
+          matchType: 'tag',
+          statusId: null,
+          tags: ['frontend', 'ux'],
+          targetType: 'team',
+          targetAgentId: null,
+          targetTeamId: 'team-builders',
+          overrideExisting: true,
+          priority: 2,
+          enabled: false,
+          createdAt: '2026-07-05T00:00:00Z',
+          updatedAt: '2026-07-05T00:00:00Z',
+        },
+      ]);
+      teamsServiceMock.listTeams.mockResolvedValue({
+        items: [{ id: 'team-builders', name: 'Builders' }],
+        total: 1,
+      });
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.autoAssignRules).toHaveLength(1);
+      expect(result.autoAssignRules[0]).toEqual(
+        expect.objectContaining({
+          matchType: 'tag',
+          tags: ['frontend', 'ux'],
+          targetType: 'team',
+          targetTeamName: 'Builders',
+          overrideExisting: true,
+          enabled: false,
         }),
       );
     });
