@@ -337,6 +337,37 @@ describe('AutoAssignRulesService.resolveAssignment', () => {
     );
     expect(res).toEqual({ agentId: 'ag-B', ruleId: 'r-override', skipped: null });
   });
+
+  it('fires the Dispatch → Dispatcher status rule and assigns the Dispatcher agent', async () => {
+    const storage = createMockStorage([
+      {
+        id: 'r-dispatch',
+        projectId: 'p1',
+        matchType: 'status',
+        statusId: 'status-dispatch',
+        tags: null,
+        targetType: 'agent',
+        targetAgentId: 'agent-dispatcher',
+        targetTeamId: null,
+        overrideExisting: false,
+        priority: 0,
+        enabled: true,
+      },
+    ]);
+    const svc = new AutoAssignRulesService(
+      storage as unknown as StorageService,
+      createMockTeamsService({}) as unknown as TeamsService,
+    );
+    const res = await svc.resolveAssignment(
+      { projectId: 'p1', statusId: 'status-dispatch', tags: [], currentAgentId: null },
+      'create',
+    );
+    expect(res).toEqual({
+      agentId: 'agent-dispatcher',
+      ruleId: 'r-dispatch',
+      skipped: null,
+    });
+  });
 });
 
 describe('AutoAssignRulesService CRUD', () => {
