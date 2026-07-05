@@ -106,6 +106,13 @@
       "tags": [
         "agent:profile:coder"
       ]
+    },
+    {
+      "id": "cb352689-466e-46c7-9bba-fd766d01ae02",
+      "title": "Dispatcher — Intake & Triage SOP",
+      "content": "You are the **Dispatcher**, the intake and triage agent for this repo. You receive raw epic requests in `Dispatch` status, understand their true intention by studying the docs and code, decide whether they belong in this repo, and route them as well-formed, intent-revealing tasks to the right downstream agent.\n\n**You do NOT plan, design, or implement. You triage and dispatch.**\n\n## Trigger\nYou receive an `[Epic Assignment]` message for an epic in `Dispatch` status. That epic is a raw request — possibly vague, possibly compound, possibly out of scope.\n\n## Step 1 — Understand the intention\nBefore judging the request, understand what the user actually needs:\n\n1. Read the epic title + description carefully.\n2. Call `devchain_list_documents` and read the repo's docs (README, `docs/`, `AGENTS.md`/`CLAUDE.md`) to understand what this repo IS and what it's trying to be.\n3. Use your native file tools (Read, Grep, Glob) to inspect the code the request touches. You are building context to judge and phrase — not implementing.\n4. Identify the **underlying user need**: what problem is this request actually solving? The literal ask may be a symptom; surface the real need. (e.g. \"add dark mode\" → underlying need: \"reduce eye strain / enable night usage\".)\n\n## Step 2 — Validate relevance & alignment\nDecide whether this request belongs here. **All three** must pass:\n\n- **Relevant?** Does it touch this repo's actual surface area, or is it about an unrelated system/dependency?\n- **Aligned with repo intent?** Does it move the repo toward its stated goals, or pull in a different direction?\n- **A real improvement or fix?** Does it add genuine value or fix a real problem — not speculative or yak-shaving?\n\nIf **any** check fails → **Step 3a (reject)**.\nIf **all** pass → **Step 3b (dispatch)**.\n\n## Step 3a — Reject (out of scope / misaligned)\n1. `devchain_add_epic_comment` with a clear, specific reason: which check failed and why. Be concrete (cite docs/code), not generic.\n2. `devchain_update_epic` → move to `Backlog` status. (Auto-clean clears your assignment.)\n3. Stop. Do not create tasks.\n\n## Step 3b — Dispatch (decompose + rephrase)\n\n**Decompose:** Determine if the request is actually multiple **unrelated** tasks masquerading as one. Unrelated = they solve different needs, touch different parts of the code, and could be done independently. If the request is one coherent task, skip decomposition (single-task path).\n\nFor **each** task (whether 1 or many):\n- **Surface the underlying need** — the task must carry the WHY, not just the WHAT. A downstream agent reading only the task should understand the real problem, not have to re-discover it.\n- **Phrase it as a self-contained task** — clear title + description including the need, the relevant context you found in docs/code, and the suggested direction.\n\n**Single-task path (one coherent task):**\n- `devchain_update_epic` on the **same** epic: update its title + description to add the underlying need + context. **Do not create a new epic.**\n- Move it `Dispatch → New`.\n- Assign by routing (below).\n\n**Multi-task path (decomposition into unrelated tasks):**\n- For each task: `devchain_create_epic` with status `New`, an intent-revealing title + description, and the assignment per routing. These are **independent top-level epics** — no parent link, no `parentId`.\n- After **all** tasks are created: `devchain_add_epic_comment` on the original `Dispatch` epic with a summary of what you dispatched (list the created task titles).\n- `devchain_update_epic` → move the original to `Done`. (Auto-clean clears your assignment.)\n\n## Routing (Brainstormer vs Architect)\n- **Brainstormer** — the task needs exploration, design, or has open ambiguity. \"Should we add X?\", \"how should we handle Y?\", new features, product/UX questions, anything where the path isn't clear.\n- **Architect** — the task has a clear technical implementation path. Refactors, well-defined fixes, \"change X to Y\", performance work where the approach is known.\n- **Unsure → Brainstormer.** It can pull in the Architect via the existing §1.5 validation loop.\n\n## Constraints\n- Never implement, plan, or design solutions. You triage and phrase — that's it.\n- Never create tasks in any status other than `New`.\n- Never assign to anyone other than the Brainstormer or Architect.\n- Every output task MUST include the underlying need. A task without the WHY is a failed dispatch.\n- Rejection comments must cite docs/code so the human can verify your reasoning.\n\n## Tools\n- `devchain_get_agent_by_name` — load your own profile (run first)\n- `devchain_get_epic_by_id` — load the epic you were assigned\n- `devchain_list_documents` + native Read/Grep/Glob — understand the repo\n- `devchain_update_epic` — rephrase in place, move status, assign\n- `devchain_create_epic` — create independent output tasks (multi-task path)\n- `devchain_add_epic_comment` — rejection reason, or dispatch summary",
+      "version": 1,
+      "tags": []
     }
   ],
   "profiles": [
@@ -377,6 +384,52 @@
           "position": 4
         }
       ]
+    },
+    {
+      "id": "eed1a712-a13c-4bb5-852b-0b8c12e5a948",
+      "name": "Dispatcher",
+      "provider": {
+        "id": "provider-claude",
+        "name": "claude"
+      },
+      "familySlug": "dispatcher",
+      "instructions": "[[prompt:Dispatcher — Intake & Triage SOP]]",
+      "temperature": null,
+      "maxTokens": null,
+      "providerConfigs": [
+        {
+          "name": "opus",
+          "providerName": "claude",
+          "description": null,
+          "options": "--model opus --dangerously-skip-permissions",
+          "env": null,
+          "position": 0
+        },
+        {
+          "name": "gpt-medium",
+          "providerName": "codex",
+          "description": null,
+          "options": "--model=gpt-5.5 --config model_reasoning_effort=\"medium\" --dangerously-bypass-approvals-and-sandbox",
+          "env": null,
+          "position": 2
+        },
+        {
+          "name": "gemini-3-pro",
+          "providerName": "gemini",
+          "description": null,
+          "options": "--model gemini-3-pro-preview -y",
+          "env": null,
+          "position": 3
+        },
+        {
+          "name": "opencode",
+          "providerName": "opencode",
+          "description": null,
+          "options": "--model zai-coding-plan/glm-5.2",
+          "env": null,
+          "position": 4
+        }
+      ]
     }
   ],
   "agents": [
@@ -411,6 +464,14 @@
       "description": "responsible for code review of completed phases",
       "modelOverride": "zai-coding-plan/glm-5.2",
       "providerConfigName": "opencode"
+    },
+    {
+      "id": "8a6ae428-b1ea-425a-b31c-bc88fb4b371d",
+      "name": "Dispatcher",
+      "profileId": "eed1a712-a13c-4bb5-852b-0b8c12e5a948",
+      "description": "intake and triage — validates relevance, surfaces underlying need, splits compound requests, routes to Brainstormer or Architect",
+      "modelOverride": "zai-coding-plan/glm-5.2",
+      "providerConfigName": "opencode"
     }
   ],
   "statuses": [
@@ -422,52 +483,59 @@
       "mcpHidden": true
     },
     {
+      "id": "ca33cc68-e087-4a5f-91c5-a93d28423b3f",
+      "label": "Dispatch",
+      "color": "#17a2b8",
+      "position": 1,
+      "mcpHidden": false
+    },
+    {
       "id": "3d6a517e-e1b1-45df-b3e6-22644adb2774",
       "label": "New",
       "color": "#6c757d",
-      "position": 1,
+      "position": 2,
       "mcpHidden": false
     },
     {
       "id": "6f333946-48a8-4df8-98a1-0fd754aae36b",
       "label": "In Progress",
       "color": "#007bff",
-      "position": 2,
+      "position": 3,
       "mcpHidden": false
     },
     {
       "id": "89488e2a-d4d8-4236-8dd7-5c0c05d99629",
       "label": "Review",
       "color": "#ffc107",
-      "position": 3,
+      "position": 4,
       "mcpHidden": false
     },
     {
       "id": "a0e82345-6a07-42ee-b392-6129b7097145",
       "label": "Done",
       "color": "#28a745",
-      "position": 4,
+      "position": 5,
       "mcpHidden": false
     },
     {
       "id": "85930873-6ca0-4622-aa7a-691e408deebe",
       "label": "Blocked",
       "color": "#dc3545",
-      "position": 5,
+      "position": 6,
       "mcpHidden": false
     },
     {
       "id": "810ff7ae-937f-4809-bb55-7ab34d3792fc",
       "label": "Backlog",
       "color": "#6c757d",
-      "position": 6,
+      "position": 7,
       "mcpHidden": false
     },
     {
       "id": "3124064d-17ff-419e-9f07-5167dfe83c31",
       "label": "Archive",
       "color": "#000000",
-      "position": 7,
+      "position": 8,
       "mcpHidden": true
     }
   ],
@@ -942,6 +1010,11 @@
           "agentName": "Architect",
           "providerConfigName": "gpt-high",
           "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "opus",
+          "modelOverride": null
         }
       ]
     },
@@ -968,6 +1041,11 @@
           "agentName": "Architect",
           "providerConfigName": "gpt-high",
           "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "gpt-medium",
+          "modelOverride": null
         }
       ]
     },
@@ -992,6 +1070,11 @@
         },
         {
           "agentName": "Architect",
+          "providerConfigName": "opus",
+          "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
           "providerConfigName": "opus",
           "modelOverride": null
         }
@@ -1020,6 +1103,11 @@
           "agentName": "Architect",
           "providerConfigName": "gpt-high",
           "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "opus",
+          "modelOverride": null
         }
       ]
     },
@@ -1045,6 +1133,11 @@
         {
           "agentName": "Architect",
           "providerConfigName": "opus",
+          "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "gpt-medium",
           "modelOverride": null
         }
       ]
@@ -1072,6 +1165,11 @@
           "agentName": "Architect",
           "providerConfigName": "gpt-high",
           "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "opus",
+          "modelOverride": null
         }
       ]
     },
@@ -1098,9 +1196,26 @@
           "agentName": "Architect",
           "providerConfigName": "gpt-high",
           "modelOverride": null
+        },
+        {
+          "agentName": "Dispatcher",
+          "providerConfigName": "opus",
+          "modelOverride": null
         }
       ]
     }
   ],
-  "scheduledEpics": []
+  "scheduledEpics": [],
+  "autoAssignRules": [
+    {
+      "matchType": "status",
+      "statusLabel": "Dispatch",
+      "tags": null,
+      "targetType": "agent",
+      "targetAgentName": "Dispatcher",
+      "targetTeamName": null,
+      "overrideExisting": false,
+      "enabled": true
+    }
+  ]
 }
