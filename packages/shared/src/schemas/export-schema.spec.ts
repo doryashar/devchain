@@ -1123,12 +1123,46 @@ describe('ExportSchema', () => {
         ],
       });
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.autoAssignRules[0].overrideExisting).toBe(false);
+        expect(result.data.autoAssignRules[0].enabled).toBe(true);
+      }
     });
 
     it('rejects status rule without statusLabel', () => {
       const result = ExportSchema.safeParse({
         version: 1,
         autoAssignRules: [{ matchType: 'status', targetType: 'agent', targetAgentName: 'X' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects status rule with empty-string statusLabel', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'status', statusLabel: '', targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects status rule with null statusLabel', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'status', statusLabel: null, targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects tag rule with null tags', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'tag', tags: null, targetType: 'agent', targetAgentName: 'X' },
+        ],
       });
       expect(result.success).toBe(false);
     });
