@@ -141,6 +141,10 @@ interface ImportProjectDeps {
     }) => Promise<{ id: string }>;
     deleteTeamsByProject: (projectId: string) => Promise<void>;
     deleteTeamsByIds: (ids: string[]) => Promise<void>;
+    listTeams: (
+      projectId: string,
+      options?: { limit?: number; offset?: number },
+    ) => Promise<{ items: Array<{ id: string; name: string }> }>;
   };
   scheduledEpicsRefresh?: {
     refreshScheduleWindow: () => void;
@@ -265,6 +269,20 @@ export async function importProjectWithHelper(
       );
     }
 
+    // Import auto-assign rules (after statuses, agents, and teams are created)
+    let autoAssignRulesImported = 0;
+    if (context.payload.autoAssignRules?.length) {
+      autoAssignRulesImported = await createImportedAutoAssignRules(
+        input.projectId,
+        context.payload.autoAssignRules,
+        {
+          statusLabelToId: templateLabelToStatusId,
+          agentNameToId: mappingResults.agentNameToId,
+        },
+        deps,
+      );
+    }
+
     const epicResult = await remapEpicAgentAssignments(
       input.projectId,
       oldAgentIdToName,
@@ -308,6 +326,7 @@ export async function importProjectWithHelper(
       epicsCleared: epicResult.epicsCleared,
       teamsImported,
       scheduledEpicsImported,
+      autoAssignRulesImported,
       sessionPreservation,
     });
   } catch (error) {
@@ -1606,6 +1625,98 @@ export async function createImportedScheduledEpics(
   return created;
 }
 
+export async function createImportedAutoAssignRules(
+  projectId: string,
+  rules: ParsedTemplatePayload['autoAssignRules'],
+  maps: {
+    statusLabelToId: Map<string, string>;
+    agentNameToId: Map<string, string>;
+  },
+  deps: Pick<ImportProjectDeps, 'storage' | 'teamsService'>,
+): Promise<number> {
+  if (!rules?.length) return 0;
+
+  // Build team name→id map for team-target rules (best-effort; skip-with-warn if unavailable)
+  const teamNameToId = new Map<string, string>();
+  if (deps.teamsService) {
+    try {
+      const listResult = await deps.teamsService.listTeams(projectId);
+      // `listTeams` may return a bare array (test mocks) or a { items } page (real service).
+      const teams = Array.isArray(listResult) ? listResult : listResult.items;
+      for (const team of teams) {
+        teamNameToId.set(team.name.trim().toLowerCase(), team.id);
+      }
+    } catch {
+      // ignore — team-target rules will skip-with-warn below
+    }
+  }
+
+  let created = 0;
+  let priority = 0;
+  for (const rule of rules) {
+    const statusId =
+      rule.matchType === 'status'
+        ? (maps.statusLabelToId.get((rule.statusLabel ?? '').trim().toLowerCase()) ?? null)
+        : null;
+
+    if (rule.matchType === 'status' && !statusId) {
+      logger.warn(
+        { projectId, statusLabel: rule.statusLabel },
+        'Auto-assign rule references unknown status; skipping',
+      );
+      priority++;
+      continue;
+    }
+
+    let targetAgentId: string | null = null;
+    let targetTeamId: string | null = null;
+    if (rule.targetType === 'agent') {
+      targetAgentId = rule.targetAgentName
+        ? (maps.agentNameToId.get(rule.targetAgentName.trim().toLowerCase()) ?? null)
+        : null;
+      if (!targetAgentId) {
+        logger.warn(
+          { projectId, agentName: rule.targetAgentName },
+          'Auto-assign rule references unknown agent; skipping',
+        );
+        priority++;
+        continue;
+      }
+    } else {
+      targetTeamId = rule.targetTeamName
+        ? (teamNameToId.get(rule.targetTeamName.trim().toLowerCase()) ?? null)
+        : null;
+      if (!targetTeamId) {
+        logger.warn(
+          { projectId, teamName: rule.targetTeamName },
+          'Auto-assign rule references unknown team; skipping',
+        );
+        priority++;
+        continue;
+      }
+    }
+
+    await deps.storage.createEpicAssignmentRule({
+      projectId,
+      matchType: rule.matchType,
+      statusId,
+      tags: rule.tags ?? null,
+      targetType: rule.targetType,
+      targetAgentId,
+      targetTeamId,
+      overrideExisting: rule.overrideExisting,
+      enabled: rule.enabled,
+      priority,
+    });
+
+    created++;
+    priority++;
+  }
+
+  logger.info({ projectId, created }, 'Auto-assign rules imported');
+  return created;
+}
+
 function buildImportSuccessResponse(args: {
   payload: ParsedTemplatePayload;
   existing: ExistingProjectData;
@@ -1621,6 +1732,7 @@ function buildImportSuccessResponse(args: {
   epicsCleared: number;
   teamsImported?: number;
   scheduledEpicsImported?: number;
+  autoAssignRulesImported?: number;
   sessionPreservation: { preservedCount: number; removedCount: number };
 }) {
   return {
@@ -1638,6 +1750,7 @@ function buildImportSuccessResponse(args: {
         subscribers: args.payload.subscribers.length,
         teams: args.teamsImported ?? 0,
         scheduledEpics: args.scheduledEpicsImported ?? 0,
+        autoAssignRules: args.autoAssignRulesImported ?? 0,
       },
       deleted: {
         prompts: args.existing.prompts.total,

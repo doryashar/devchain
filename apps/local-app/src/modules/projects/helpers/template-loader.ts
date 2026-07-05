@@ -26,6 +26,7 @@ import {
   importProviderSettings,
   createImportedTeams,
   createImportedScheduledEpics,
+  createImportedAutoAssignRules,
   preserveImportedEnv,
   pruneUnavailableTeamProfileSelections,
 } from './project-import';
@@ -402,6 +403,21 @@ export async function createFromTemplateWithHelper(
         storage: deps.storage,
         scheduledEpicsRefresh: deps.scheduledEpicsRefresh,
         computeNextRunAt: deps.computeNextRunAt,
+      },
+    );
+  }
+
+  if (resolvedPayload.autoAssignRules?.length) {
+    await createImportedAutoAssignRules(
+      result.project.id,
+      resolvedPayload.autoAssignRules,
+      {
+        agentNameToId: agentNameToNewId,
+        statusLabelToId,
+      },
+      {
+        storage: deps.storage,
+        teamsService: deps.teamsService,
       },
     );
   }
