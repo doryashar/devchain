@@ -382,19 +382,36 @@ async function prepareImportContext(
 }
 
 async function loadExistingProjectData(projectId: string, storage: StorageService) {
-  const [prompts, profiles, agents, statuses, watchers, subscribers, scheduledEpics, epicAssignmentRules] =
-    await Promise.all([
-      storage.listPrompts({ projectId, limit: 10000, offset: 0 }),
-      storage.listAgentProfiles({ projectId, limit: 10000, offset: 0 }),
-      storage.listAgents(projectId, { limit: 10000, offset: 0 }),
-      storage.listStatuses(projectId, { limit: 10000, offset: 0 }),
-      storage.listWatchers(projectId),
-      storage.listSubscribers(projectId),
-      storage.listScheduledEpics(projectId, { limit: 10000 }),
-      storage.listEpicAssignmentRules(projectId),
-    ]);
+  const [
+    prompts,
+    profiles,
+    agents,
+    statuses,
+    watchers,
+    subscribers,
+    scheduledEpics,
+    epicAssignmentRules,
+  ] = await Promise.all([
+    storage.listPrompts({ projectId, limit: 10000, offset: 0 }),
+    storage.listAgentProfiles({ projectId, limit: 10000, offset: 0 }),
+    storage.listAgents(projectId, { limit: 10000, offset: 0 }),
+    storage.listStatuses(projectId, { limit: 10000, offset: 0 }),
+    storage.listWatchers(projectId),
+    storage.listSubscribers(projectId),
+    storage.listScheduledEpics(projectId, { limit: 10000 }),
+    storage.listEpicAssignmentRules(projectId),
+  ]);
 
-  return { prompts, profiles, agents, statuses, watchers, subscribers, scheduledEpics, epicAssignmentRules };
+  return {
+    prompts,
+    profiles,
+    agents,
+    statuses,
+    watchers,
+    subscribers,
+    scheduledEpics,
+    epicAssignmentRules,
+  };
 }
 
 async function collectUnmatchedStatuses(

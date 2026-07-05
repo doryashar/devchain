@@ -97,7 +97,9 @@ describe('shipped template default agents', () => {
       expect(profile).toBeDefined();
       expect(profile.familySlug).toBe('dispatcher');
       expect(profile.instructions).toBe('[[prompt:Dispatcher — Intake & Triage SOP]]');
-      const prompt = (teamsDev.template as any).prompts.find((p: any) => p.title === 'Dispatcher — Intake & Triage SOP');
+      const prompt = (teamsDev.template as any).prompts.find(
+        (p: any) => p.title === 'Dispatcher — Intake & Triage SOP',
+      );
       expect(prompt).toBeDefined();
       const teams = (teamsDev.template as any).teams ?? [];
       for (const team of teams) {
@@ -108,8 +110,13 @@ describe('shipped template default agents', () => {
 
     it('ships a Dispatch → Dispatcher auto-assign rule', () => {
       const rules = (teamsDev.template as any).autoAssignRules ?? [];
-      const dispatchRule = rules.find((r: any) =>
-        r.matchType === 'status' && r.statusLabel === 'Dispatch' && r.targetType === 'agent' && r.targetAgentName === 'Dispatcher');
+      const dispatchRule = rules.find(
+        (r: any) =>
+          r.matchType === 'status' &&
+          r.statusLabel === 'Dispatch' &&
+          r.targetType === 'agent' &&
+          r.targetAgentName === 'Dispatcher',
+      );
       expect(dispatchRule).toBeDefined();
     });
 
@@ -155,7 +162,9 @@ describe('shipped template default agents', () => {
     });
 
     it('has a Dispatch status at position 1, mcpHidden false, not in autoCleanStatusLabels', () => {
-      const dispatch = (threeAgents.template as any).statuses.find((s: any) => s.label === 'Dispatch');
+      const dispatch = (threeAgents.template as any).statuses.find(
+        (s: any) => s.label === 'Dispatch',
+      );
       expect(dispatch).toBeDefined();
       expect(dispatch.position).toBe(1);
       expect(dispatch.mcpHidden).toBe(false);
@@ -173,18 +182,26 @@ describe('shipped template default agents', () => {
     it('has a Dispatcher agent + profile + SOP prompt', () => {
       const agent = (threeAgents.template as any).agents.find((a: any) => a.name === 'Dispatcher');
       expect(agent).toBeDefined();
-      const profile = (threeAgents.template as any).profiles.find((p: any) => p.name === 'Dispatcher');
+      const profile = (threeAgents.template as any).profiles.find(
+        (p: any) => p.name === 'Dispatcher',
+      );
       expect(profile).toBeDefined();
       expect(profile.familySlug).toBe('dispatcher');
       expect(profile.instructions).toBe('[[prompt:Dispatcher — Intake & Triage SOP]]');
-      const prompt = (threeAgents.template as any).prompts.find((p: any) => p.title === 'Dispatcher — Intake & Triage SOP');
+      const prompt = (threeAgents.template as any).prompts.find(
+        (p: any) => p.title === 'Dispatcher — Intake & Triage SOP',
+      );
       expect(prompt).toBeDefined();
     });
 
     it('ships a Dispatch → Dispatcher auto-assign rule', () => {
       const rules = (threeAgents.template as any).autoAssignRules ?? [];
-      const dispatchRule = rules.find((r: any) =>
-        r.matchType === 'status' && r.statusLabel === 'Dispatch' && r.targetAgentName === 'Dispatcher');
+      const dispatchRule = rules.find(
+        (r: any) =>
+          r.matchType === 'status' &&
+          r.statusLabel === 'Dispatch' &&
+          r.targetAgentName === 'Dispatcher',
+      );
       expect(dispatchRule).toBeDefined();
     });
 
@@ -199,7 +216,9 @@ describe('shipped template default agents', () => {
           if (!profile) throw new Error(`profile for ${cfg.agentName} not found`);
           const configNames = (profile.providerConfigs as any[]).map((c) => c.name);
           if (!configNames.includes(cfg.providerConfigName)) {
-            throw new Error(`preset "${preset.name}" references "${cfg.providerConfigName}" for ${cfg.agentName}, available: [${configNames.join(', ')}]`);
+            throw new Error(
+              `preset "${preset.name}" references "${cfg.providerConfigName}" for ${cfg.agentName}, available: [${configNames.join(', ')}]`,
+            );
           }
         }
       }
