@@ -56,6 +56,7 @@ describe('ProjectsService', () => {
     listWatchers: jest.Mock;
     listSubscribers: jest.Mock;
     listScheduledEpics: jest.Mock;
+    listEpicAssignmentRules: jest.Mock;
     createWatcher: jest.Mock;
     createSubscriber: jest.Mock;
     deleteSubscriber: jest.Mock;
@@ -138,6 +139,7 @@ describe('ProjectsService', () => {
       listWatchers: jest.fn().mockResolvedValue([]),
       listSubscribers: jest.fn().mockResolvedValue([]),
       listScheduledEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      listEpicAssignmentRules: jest.fn().mockResolvedValue([]),
       createWatcher: jest.fn(),
       createSubscriber: jest.fn(),
       deleteSubscriber: jest.fn(),
@@ -1593,6 +1595,82 @@ describe('ProjectsService', () => {
       const json = JSON.stringify(result);
       expect(json).not.toContain(otherProjectId);
       expect(json).not.toContain('provider_env_scopes');
+    });
+  });
+
+  describe('autoAssignRules export', () => {
+    const projectId = 'project-auto';
+
+    beforeEach(() => {
+      storage.getProject.mockResolvedValue({
+        id: projectId,
+        name: 'Auto Project',
+        rootPath: '/test',
+        isTemplate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      storage.listPrompts.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.listAgentProfiles.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.listAgents.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.listStatuses.mockResolvedValue({ items: [], total: 0, limit: 100, offset: 0 });
+      storage.getInitialSessionPrompt.mockResolvedValue(null);
+      storage.listWatchers.mockResolvedValue([]);
+      storage.listSubscribers.mockResolvedValue([]);
+      storage.listProfileProviderConfigsByProfile.mockResolvedValue([]);
+      storage.listScheduledEpics.mockResolvedValue({ items: [], total: 0 });
+    });
+
+    it('exports empty autoAssignRules when none exist', async () => {
+      storage.listEpicAssignmentRules.mockResolvedValue([]);
+      const result = await service.exportProject(projectId);
+      expect(result.autoAssignRules).toEqual([]);
+    });
+
+    it('exports rules with name-based references (status label, agent name)', async () => {
+      storage.listStatuses.mockResolvedValue({
+        items: [{ id: 'status-dispatch', label: 'Dispatch', color: '#17a2b8', position: 1 }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+      storage.listAgents.mockResolvedValue({
+        items: [{ id: 'agent-dispatcher', name: 'Dispatcher', profileId: 'p-1' }],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      });
+      storage.listEpicAssignmentRules.mockResolvedValue([
+        {
+          id: 'rule-1',
+          projectId,
+          matchType: 'status',
+          statusId: 'status-dispatch',
+          tags: null,
+          targetType: 'agent',
+          targetAgentId: 'agent-dispatcher',
+          targetTeamId: null,
+          overrideExisting: false,
+          priority: 0,
+          enabled: true,
+          createdAt: '2026-07-05T00:00:00Z',
+          updatedAt: '2026-07-05T00:00:00Z',
+        },
+      ]);
+
+      const result = await service.exportProject(projectId);
+
+      expect(result.autoAssignRules).toHaveLength(1);
+      expect(result.autoAssignRules[0]).toEqual(
+        expect.objectContaining({
+          matchType: 'status',
+          statusLabel: 'Dispatch',
+          targetType: 'agent',
+          targetAgentName: 'Dispatcher',
+          overrideExisting: false,
+          enabled: true,
+        }),
+      );
     });
   });
 });
