@@ -1059,6 +1059,7 @@ describe('importProjectWithHelper — session preservation', () => {
     listSubscribers: jest.fn().mockResolvedValue([]),
     listScheduledEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     listEpics: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listEpicAssignmentRules: jest.fn().mockResolvedValue([]),
     countEpicsByStatus: jest.fn().mockResolvedValue(0),
     deleteAgent: jest.fn().mockResolvedValue(undefined),
     deleteAgentProfile: jest.fn().mockResolvedValue(undefined),
@@ -1067,6 +1068,7 @@ describe('importProjectWithHelper — session preservation', () => {
     updateStatus: jest.fn().mockImplementation(async (id: string) => ({ id })),
     deleteSubscriber: jest.fn().mockResolvedValue(undefined),
     deleteScheduledEpic: jest.fn().mockResolvedValue(undefined),
+    deleteEpicAssignmentRule: jest.fn().mockResolvedValue(undefined),
     createAgentProfile: jest.fn().mockImplementation(async (data: { name: string }) => ({
       id: `new-profile-${data.name.toLowerCase().replace(/\s+/g, '-')}`,
       ...data,
@@ -1556,5 +1558,50 @@ describe('createImportedAutoAssignRules', () => {
     );
     expect(created).toBe(0);
     expect(storage.createEpicAssignmentRule).not.toHaveBeenCalled();
+  });
+
+  it('assigns priority by array index even when an earlier rule is skipped', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          // skipped: unknown status label
+          matchType: 'status' as const,
+          statusLabel: 'Missing',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+        {
+          // created at priority 1 (array index), NOT 0
+          matchType: 'status' as const,
+          statusLabel: 'Dispatch',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map([['dispatch', 'status-dispatch']]),
+        agentNameToId: new Map([['dispatcher', 'agent-dispatcher']]),
+      },
+      {
+        storage: storage as unknown as AnyDeps,
+        teamsService: makeTeamsServiceMock() as unknown as AnyDeps,
+      },
+    );
+
+    expect(created).toBe(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledTimes(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledWith(
+      expect.objectContaining({ priority: 1 }),
+    );
   });
 });
