@@ -13,16 +13,38 @@ jest.mock('../../events/services/events.service', () => ({
 
 describe('EpicAssignmentNotifierSubscriber', () => {
   let eventLogService: { recordHandledOk: jest.Mock; recordHandledFail: jest.Mock };
-  let settingsService: { getSetting: jest.Mock };
+  let settingsService: { getSetting: jest.Mock; getAutoCleanStatusIds: jest.Mock };
   let deliverMock: jest.Mock;
   let messageDelivery: AgentMessageDeliveryService;
   let getRecipientContextMock: jest.Mock;
   let teamsService: TeamsService;
   let getAgentMock: jest.Mock;
   let getProjectMock: jest.Mock;
-  let getEpicMock: jest.Mock;
+  let countDeliveredMock: jest.Mock;
+  let findOldestMock: jest.Mock;
+  let markDeliveredMock: jest.Mock;
+  let clearDeliveredMock: jest.Mock;
   let storageService: StorageService;
   let subscriber: EpicAssignmentNotifierSubscriber;
+
+  // The pump delivers the oldest queued epic for the agent. By default the agent
+  // is free (0 delivered active) and one epic is queued — so a delivery happens.
+  const defaultQueuedEpic = {
+    id: 'epic-1',
+    projectId: 'project-1',
+    title: 'Add Feature',
+    description: null,
+    statusId: 'status-1',
+    parentId: null,
+    agentId: 'agent-1',
+    version: 2,
+    data: null,
+    skillsRequired: null,
+    tags: [],
+    assignmentDeliveredAt: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
 
   const basePayload = {
     epicId: 'epic-1',
@@ -48,6 +70,7 @@ describe('EpicAssignmentNotifierSubscriber', () => {
     };
     settingsService = {
       getSetting: jest.fn().mockReturnValue('[Epic Assignment]\n{epic_title} -> {agent_name}'),
+      getAutoCleanStatusIds: jest.fn().mockReturnValue([]),
     };
     deliverMock = jest.fn().mockResolvedValue({ status: 'queued', results: [] });
     messageDelivery = { deliver: deliverMock } as unknown as AgentMessageDeliveryService;
@@ -55,13 +78,33 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       .fn()
       .mockResolvedValue({ isTeamLead: false, teamNames: [], memberRole: null });
     teamsService = { getRecipientContext: getRecipientContextMock } as unknown as TeamsService;
-    getAgentMock = jest.fn();
-    getProjectMock = jest.fn();
-    getEpicMock = jest.fn();
+    getAgentMock = jest.fn().mockResolvedValue({ name: 'Helper Agent' });
+    getProjectMock = jest.fn().mockResolvedValue({ name: 'Demo Project' });
+    // Stateful pump simulation: agent is free until one epic is marked delivered,
+    // after which it's at capacity and the queue is empty. Mirrors real behavior so
+    // the pump delivers exactly one epic per trigger then stops.
+    let delivered = false;
+    countDeliveredMock = jest.fn().mockImplementation(() => Promise.resolve(delivered ? 1 : 0));
+    findOldestMock = jest
+      .fn()
+      .mockImplementation(() => Promise.resolve(delivered ? null : defaultQueuedEpic));
+    markDeliveredMock = jest.fn().mockImplementation(() => {
+      delivered = true;
+      return Promise.resolve(undefined);
+    });
+    clearDeliveredMock = jest.fn().mockImplementation(() => {
+      delivered = false;
+      return Promise.resolve(undefined);
+    });
     storageService = {
       getAgent: getAgentMock,
       getProject: getProjectMock,
-      getEpic: getEpicMock,
+      getEpic: jest.fn(),
+      getGuest: jest.fn(),
+      countDeliveredActiveEpicsForAgent: countDeliveredMock,
+      findOldestUndeliveredActiveEpicForAgent: findOldestMock,
+      markAssignmentDelivered: markDeliveredMock,
+      clearAssignmentDelivered: clearDeliveredMock,
     } as unknown as StorageService;
     getEventMetadataMock.mockReturnValue({ id: 'event-1' });
 
@@ -78,7 +121,7 @@ describe('EpicAssignmentNotifierSubscriber', () => {
     jest.resetAllMocks();
   });
 
-  it('renders template placeholders and delivers epic.updated through AMD', async () => {
+  it('renders template placeholders and delivers epic.updated through the pump', async () => {
     await subscriber.handleEpicUpdated(basePayload);
 
     expect(deliverMock).toHaveBeenCalledWith(
@@ -92,36 +135,31 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       }),
       { submitKeys: ['Enter'] },
     );
+    expect(markDeliveredMock).toHaveBeenCalledWith('epic-1');
     expect(eventLogService.recordHandledOk).toHaveBeenCalledWith(
       expect.objectContaining({
         handler: 'EpicAssignmentNotifier',
         eventId: 'event-1',
-        detail: { poolStatus: 'queued' },
+        detail: { deliveredThisEpic: true },
       }),
     );
   });
 
-  it('records failure when AMD delivery throws', async () => {
+  it('leaves the epic queued when AMD delivery throws (retries on next pump)', async () => {
     deliverMock.mockRejectedValue(new Error('delivery failure'));
 
     await subscriber.handleEpicUpdated(basePayload);
 
-    expect(eventLogService.recordHandledFail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        handler: 'EpicAssignmentNotifier',
-        eventId: 'event-1',
-        detail: { message: 'delivery failure' },
-      }),
-    );
-    expect(eventLogService.recordHandledOk).not.toHaveBeenCalled();
+    // The pump caught the failure and left the epic undelivered for retry.
+    expect(markDeliveredMock).not.toHaveBeenCalled();
+    // The handler still records OK (the pump ran; the epic is queued, not failed).
+    expect(eventLogService.recordHandledFail).not.toHaveBeenCalled();
   });
 
-  it('fills missing names from storage when payload lacks context', async () => {
+  it('fills names from storage when resolving the queued epic', async () => {
     settingsService.getSetting.mockReturnValue('{epic_title} -> {agent_name} ({project_name})');
     getAgentMock.mockResolvedValue({ name: 'Storage Agent' });
     getProjectMock.mockResolvedValue({ name: 'Storage Project' });
-    getEpicMock.mockResolvedValue({ title: 'Storage Epic' });
-    getEventMetadataMock.mockReturnValue(null);
 
     await subscriber.handleEpicUpdated({
       epicId: 'epic-1',
@@ -131,24 +169,23 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       epicTitle: 'Add Feature',
       projectName: undefined,
       changes: {
-        agentId: {
-          previous: null,
-          current: 'agent-1',
-        },
+        agentId: { previous: null, current: 'agent-1' },
       },
     });
 
-    expect(getAgentMock).toHaveBeenCalled();
-    expect(getProjectMock).toHaveBeenCalled();
-    expect(getEpicMock).not.toHaveBeenCalled();
+    expect(getAgentMock).toHaveBeenCalledWith('agent-1');
+    expect(getProjectMock).toHaveBeenCalledWith('project-1');
     expect(deliverMock).toHaveBeenCalledWith(
       ['agent-1'],
-      expect.objectContaining({ body: expect.stringContaining('Add Feature') }),
+      expect.objectContaining({
+        body: 'Add Feature -> Storage Agent (Storage Project)',
+      }),
       expect.any(Object),
     );
   });
 
-  it('ignores events without assignment changes or with unassignment', async () => {
+  it('ignores events without assignment/status changes, and does not deliver on pure unassignment when nothing is queued', async () => {
+    // title-only change → no agent/status change → ignored entirely
     await subscriber.handleEpicUpdated({
       epicId: 'epic-1',
       projectId: 'project-1',
@@ -158,6 +195,8 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       changes: { title: { previous: 'Old Title', current: 'Updated Title' } },
     });
 
+    // Pure unassignment (A → null): pumps previous agent, but nothing queued → no delivery.
+    findOldestMock.mockResolvedValue(null);
     await subscriber.handleEpicUpdated({
       epicId: 'epic-1',
       projectId: 'project-1',
@@ -165,11 +204,7 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       version: 2,
       epicTitle: 'Add Feature',
       changes: {
-        agentId: {
-          previous: 'agent-1',
-          current: null,
-          previousName: 'Helper Agent',
-        },
+        agentId: { previous: 'agent-1', current: null, previousName: 'Helper Agent' },
       },
     });
 
@@ -177,40 +212,31 @@ describe('EpicAssignmentNotifierSubscriber', () => {
   });
 
   it('skips self-assignment but delivers same-agent reassignment by another actor', async () => {
+    // Self-assignment: actor is the assignee → mark delivered, no notification.
     await subscriber.handleEpicUpdated({
       epicId: 'epic-1',
       projectId: 'project-1',
       parentId: null,
       version: 2,
       epicTitle: 'Self Assignment',
-      projectName: 'Demo Project',
       actor: { type: 'agent' as const, id: 'agent-1' },
-      recipientIds: [],
       changes: {
-        agentId: {
-          previous: null,
-          current: 'agent-1',
-          currentName: 'Helper Agent',
-        },
+        agentId: { previous: null, current: 'agent-1', currentName: 'Helper Agent' },
       },
     });
     expect(deliverMock).not.toHaveBeenCalled();
+    expect(markDeliveredMock).toHaveBeenCalledWith('epic-1');
 
+    // Same-agent reassignment by ANOTHER actor (agent-2): not self-assignment → pump + deliver.
     await subscriber.handleEpicUpdated({
       epicId: 'epic-1',
       projectId: 'project-1',
       parentId: null,
       version: 2,
       epicTitle: 'Re-assigned Epic',
-      projectName: 'Demo Project',
       actor: { type: 'agent' as const, id: 'agent-2' },
-      recipientIds: ['agent-1'],
       changes: {
-        agentId: {
-          previous: 'agent-1',
-          current: 'agent-1',
-          currentName: 'Coder',
-        },
+        agentId: { previous: 'agent-1', current: 'agent-1', currentName: 'Coder' },
       },
     });
 
@@ -222,7 +248,9 @@ describe('EpicAssignmentNotifierSubscriber', () => {
     );
   });
 
-  it('delivers epic.created assignments using enriched assignmentRecipientIds', async () => {
+  it('delivers epic.created assignments to the assignee via the pump', async () => {
+    findOldestMock.mockResolvedValue({ ...defaultQueuedEpic, title: 'New Epic' });
+
     await subscriber.handleEpicCreated({
       epicId: 'epic-1',
       projectId: 'project-1',
@@ -230,7 +258,6 @@ describe('EpicAssignmentNotifierSubscriber', () => {
       epicTitle: 'New Epic',
       statusId: 'status-1',
       agentId: 'agent-1',
-      assignmentRecipientIds: ['agent-1'],
       actor: { type: 'agent' as const, id: 'agent-2' },
       projectName: 'Demo Project',
       agentName: 'Helper Agent',

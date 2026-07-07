@@ -346,6 +346,117 @@ describe('LocalStorageService', () => {
   });
 
   // ==========================================
+  // Assignment delivery queue (one-at-a-time gate)
+  // ==========================================
+
+  describe('Assignment delivery queue', () => {
+    it('counts delivered active epics, finds the oldest queued, and marks delivered', async () => {
+      const project = await seedProject();
+      const statuses = await getStatuses(project.id);
+      const proposedId = statuses.find((s) => s.label === 'Proposed')!.id;
+      const doneId = statuses.find((s) => s.label === 'Done')!.id;
+      const terminal = [doneId];
+      const { agent } = await seedFullAgent(project.id);
+
+      const epic1 = await service.createEpic({
+        projectId: project.id,
+        title: 'First',
+        statusId: proposedId,
+        agentId: agent.id,
+      });
+      // Small delay so createdAt ordering is deterministic.
+      await new Promise((r) => setTimeout(r, 5));
+      const epic2 = await service.createEpic({
+        projectId: project.id,
+        title: 'Second',
+        statusId: proposedId,
+        agentId: agent.id,
+      });
+
+      // Both queued (undelivered): nothing delivered yet.
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, terminal)).toBe(
+        0,
+      );
+      // Oldest queued is epic1 (earlier createdAt).
+      const oldest = await service.findOldestUndeliveredActiveEpicForAgent(
+        agent.id,
+        project.id,
+        terminal,
+      );
+      expect(oldest?.id).toBe(epic1.id);
+
+      // Mark epic1 delivered → count 1, oldest queued is now epic2.
+      await service.markAssignmentDelivered(epic1.id);
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, terminal)).toBe(
+        1,
+      );
+      const next = await service.findOldestUndeliveredActiveEpicForAgent(
+        agent.id,
+        project.id,
+        terminal,
+      );
+      expect(next?.id).toBe(epic2.id);
+
+      // Mark epic2 delivered → count 2, no more queued.
+      await service.markAssignmentDelivered(epic2.id);
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, terminal)).toBe(
+        2,
+      );
+      expect(
+        await service.findOldestUndeliveredActiveEpicForAgent(agent.id, project.id, terminal),
+      ).toBeNull();
+    });
+
+    it('excludes epics whose status is in the terminal set', async () => {
+      const project = await seedProject();
+      const statuses = await getStatuses(project.id);
+      const doneId = statuses.find((s) => s.label === 'Done')!.id;
+      const { agent } = await seedFullAgent(project.id);
+
+      // A "Done" epic still assigned to the agent should not count as active/delivered.
+      const doneEpic = await service.createEpic({
+        projectId: project.id,
+        title: 'Already Done',
+        statusId: doneId,
+        agentId: agent.id,
+      });
+      await service.markAssignmentDelivered(doneEpic.id);
+
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, [doneId])).toBe(
+        0,
+      );
+      expect(
+        await service.findOldestUndeliveredActiveEpicForAgent(agent.id, project.id, [doneId]),
+      ).toBeNull();
+
+      // With an empty terminal set, the Done epic counts again.
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, [])).toBe(1);
+    });
+
+    it('clearAssignmentDelivered re-queues an epic', async () => {
+      const project = await seedProject();
+      const statuses = await getStatuses(project.id);
+      const proposedId = statuses.find((s) => s.label === 'Proposed')!.id;
+      const { agent } = await seedFullAgent(project.id);
+
+      const epic = await service.createEpic({
+        projectId: project.id,
+        title: 'Requeue Me',
+        statusId: proposedId,
+        agentId: agent.id,
+      });
+      await service.markAssignmentDelivered(epic.id);
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, [])).toBe(1);
+
+      await service.clearAssignmentDelivered(epic.id);
+      expect(await service.countDeliveredActiveEpicsForAgent(agent.id, project.id, [])).toBe(0);
+      expect(
+        await service.findOldestUndeliveredActiveEpicForAgent(agent.id, project.id, []),
+      )?.toMatchObject({ id: epic.id });
+    });
+  });
+
+  // ==========================================
   // Epic Comments
   // ==========================================
 

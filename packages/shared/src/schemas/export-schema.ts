@@ -296,6 +296,54 @@ export const ExportSchema = z
       )
       .optional()
       .default([]),
+    // Auto-assign rules (uses labels/names for portability, resolved to IDs on import)
+    autoAssignRules: z
+      .array(
+        z
+          .object({
+            matchType: z.enum(['status', 'tag']),
+            statusLabel: z.string().nullable().optional(),
+            tags: z.array(z.string()).nullable().optional(),
+            targetType: z.enum(['agent', 'team']),
+            targetAgentName: z.string().nullable().optional(),
+            targetTeamName: z.string().nullable().optional(),
+            overrideExisting: z.boolean().optional().default(false),
+            enabled: z.boolean().optional().default(true),
+          })
+          .strict()
+          .superRefine((rule, ctx) => {
+            if (rule.matchType === 'status' && !rule.statusLabel) {
+              ctx.addIssue({
+                code: 'custom',
+                message: "statusLabel is required when matchType='status'",
+                path: ['statusLabel'],
+              });
+            }
+            if (rule.matchType === 'tag' && (!rule.tags || rule.tags.length === 0)) {
+              ctx.addIssue({
+                code: 'custom',
+                message: 'tags (non-empty) is required when matchType=tag',
+                path: ['tags'],
+              });
+            }
+            if (rule.targetType === 'agent' && !rule.targetAgentName) {
+              ctx.addIssue({
+                code: 'custom',
+                message: "targetAgentName is required when targetType='agent'",
+                path: ['targetAgentName'],
+              });
+            }
+            if (rule.targetType === 'team' && !rule.targetTeamName) {
+              ctx.addIssue({
+                code: 'custom',
+                message: "targetTeamName is required when targetType='team'",
+                path: ['targetTeamName'],
+              });
+            }
+          }),
+      )
+      .optional()
+      .default([]),
     // Template manifest metadata (optional, for display/UX purposes)
     _manifest: ManifestSchema.optional(),
   })

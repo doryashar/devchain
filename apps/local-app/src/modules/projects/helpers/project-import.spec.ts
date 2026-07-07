@@ -6,6 +6,7 @@ import {
   createImportedTeams,
   applyTeamOverrides,
   pruneUnavailableTeamProfileSelections,
+  createImportedAutoAssignRules,
 } from './project-import';
 import { ConflictError, ValidationError } from '../../../common/errors/error-types';
 
@@ -1058,6 +1059,7 @@ describe('importProjectWithHelper — session preservation', () => {
     listSubscribers: jest.fn().mockResolvedValue([]),
     listScheduledEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
     listEpics: jest.fn().mockResolvedValue({ items: [], total: 0, limit: 10000, offset: 0 }),
+    listEpicAssignmentRules: jest.fn().mockResolvedValue([]),
     countEpicsByStatus: jest.fn().mockResolvedValue(0),
     deleteAgent: jest.fn().mockResolvedValue(undefined),
     deleteAgentProfile: jest.fn().mockResolvedValue(undefined),
@@ -1066,6 +1068,7 @@ describe('importProjectWithHelper — session preservation', () => {
     updateStatus: jest.fn().mockImplementation(async (id: string) => ({ id })),
     deleteSubscriber: jest.fn().mockResolvedValue(undefined),
     deleteScheduledEpic: jest.fn().mockResolvedValue(undefined),
+    deleteEpicAssignmentRule: jest.fn().mockResolvedValue(undefined),
     createAgentProfile: jest.fn().mockImplementation(async (data: { name: string }) => ({
       id: `new-profile-${data.name.toLowerCase().replace(/\s+/g, '-')}`,
       ...data,
@@ -1389,5 +1392,216 @@ describe('importProjectWithHelper — session preservation', () => {
 
     expect(storage.parkSessionsFromAgents).not.toHaveBeenCalled();
     expect(storage.applySessionPlan).not.toHaveBeenCalled();
+  });
+});
+
+describe('createImportedAutoAssignRules', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type AnyDeps = any;
+
+  function makeStorageMock() {
+    return {
+      createEpicAssignmentRule: jest.fn().mockResolvedValue({ id: 'rule-1' }),
+    };
+  }
+  function makeTeamsServiceMock(teams: Array<{ id: string; name: string }> = []) {
+    return { listTeams: jest.fn().mockResolvedValue(teams) };
+  }
+
+  it('creates a status→agent rule resolving label and name to ids, priority by array index', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          matchType: 'status' as const,
+          statusLabel: 'Dispatch',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map([['dispatch', 'status-dispatch']]),
+        agentNameToId: new Map([['dispatcher', 'agent-dispatcher']]),
+      },
+      {
+        storage: storage as unknown as AnyDeps,
+        teamsService: makeTeamsServiceMock() as unknown as AnyDeps,
+      },
+    );
+
+    expect(created).toBe(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'proj-1',
+        matchType: 'status',
+        statusId: 'status-dispatch',
+        targetType: 'agent',
+        targetAgentId: 'agent-dispatcher',
+        targetTeamId: null,
+        overrideExisting: false,
+        enabled: true,
+        priority: 0,
+      }),
+    );
+  });
+
+  it('skips with warning and does not create when status label is unknown', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          matchType: 'status' as const,
+          statusLabel: 'Missing',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map([['dispatch', 'status-dispatch']]),
+        agentNameToId: new Map([['dispatcher', 'agent-dispatcher']]),
+      },
+      {
+        storage: storage as unknown as AnyDeps,
+        teamsService: makeTeamsServiceMock() as unknown as AnyDeps,
+      },
+    );
+
+    expect(created).toBe(0);
+    expect(storage.createEpicAssignmentRule).not.toHaveBeenCalled();
+  });
+
+  it('skips when agent target name is unknown', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          matchType: 'status' as const,
+          statusLabel: 'Dispatch',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Ghost',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map([['dispatch', 'status-dispatch']]),
+        agentNameToId: new Map([['dispatcher', 'agent-dispatcher']]),
+      },
+      { storage: storage as unknown as AnyDeps, teamsService: null as unknown as AnyDeps },
+    );
+
+    expect(created).toBe(0);
+    expect(storage.createEpicAssignmentRule).not.toHaveBeenCalled();
+  });
+
+  it('creates a tag→team rule resolving team name via teamsService', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          matchType: 'tag' as const,
+          tags: ['frontend'],
+          statusLabel: null,
+          targetType: 'team' as const,
+          targetTeamName: 'Builders',
+          targetAgentName: null,
+          overrideExisting: true,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map(),
+        agentNameToId: new Map(),
+      },
+      {
+        storage: storage as unknown as AnyDeps,
+        teamsService: makeTeamsServiceMock([
+          { id: 'team-builders', name: 'Builders' },
+        ]) as unknown as AnyDeps,
+      },
+    );
+
+    expect(created).toBe(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        matchType: 'tag',
+        tags: ['frontend'],
+        targetType: 'team',
+        targetTeamId: 'team-builders',
+        overrideExisting: true,
+        priority: 0,
+      }),
+    );
+  });
+
+  it('returns 0 and creates nothing when rules array is empty', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [],
+      { statusLabelToId: new Map(), agentNameToId: new Map() },
+      { storage: storage as unknown as AnyDeps, teamsService: null as unknown as AnyDeps },
+    );
+    expect(created).toBe(0);
+    expect(storage.createEpicAssignmentRule).not.toHaveBeenCalled();
+  });
+
+  it('assigns priority by array index even when an earlier rule is skipped', async () => {
+    const storage = makeStorageMock();
+    const created = await createImportedAutoAssignRules(
+      'proj-1',
+      [
+        {
+          // skipped: unknown status label
+          matchType: 'status' as const,
+          statusLabel: 'Missing',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+        {
+          // created at priority 1 (array index), NOT 0
+          matchType: 'status' as const,
+          statusLabel: 'Dispatch',
+          tags: null,
+          targetType: 'agent' as const,
+          targetAgentName: 'Dispatcher',
+          targetTeamName: null,
+          overrideExisting: false,
+          enabled: true,
+        },
+      ],
+      {
+        statusLabelToId: new Map([['dispatch', 'status-dispatch']]),
+        agentNameToId: new Map([['dispatcher', 'agent-dispatcher']]),
+      },
+      {
+        storage: storage as unknown as AnyDeps,
+        teamsService: makeTeamsServiceMock() as unknown as AnyDeps,
+      },
+    );
+
+    expect(created).toBe(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledTimes(1);
+    expect(storage.createEpicAssignmentRule).toHaveBeenCalledWith(
+      expect.objectContaining({ priority: 1 }),
+    );
   });
 });

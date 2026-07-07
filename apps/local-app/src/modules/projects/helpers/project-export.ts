@@ -90,6 +90,7 @@ export async function exportProjectWithHelper(
   const providerModels = await buildProviderModels(profileContext.providersMap, deps.storage);
   const teams = deps.teamsService ? await buildExportTeams(state.project, deps) : [];
   const scheduledEpics = await buildExportScheduledEpics(projectId, state, deps.storage);
+  const autoAssignRules = await buildExportAutoAssignRules(projectId, state, deps);
 
   const manifest = buildManifest(
     state.project,
@@ -121,6 +122,7 @@ export async function exportProjectWithHelper(
     ...(teams.length > 0 && { teams }),
     ...(exportPresets !== undefined ? { presets: exportPresets } : {}),
     scheduledEpics,
+    autoAssignRules,
   };
 }
 
@@ -645,6 +647,36 @@ async function buildExportScheduledEpics(
       };
     }),
   );
+}
+
+async function buildExportAutoAssignRules(
+  projectId: string,
+  state: ExportState,
+  deps: ExportProjectDeps,
+) {
+  const rules = await deps.storage.listEpicAssignmentRules(projectId);
+  if (rules.length === 0) return [];
+
+  const statusIdToLabel = new Map(state.statusesRes.items.map((s) => [s.id, s.label]));
+  const agentIdToName = new Map(state.agentsRes.items.map((a) => [a.id, a.name]));
+
+  const teamIdToName = new Map<string, string>();
+  if (deps.teamsService) {
+    const teamsResult = await deps.teamsService.listTeams(projectId, { limit: 10000 });
+    const teams = Array.isArray(teamsResult) ? teamsResult : teamsResult.items;
+    for (const t of teams) teamIdToName.set(t.id, t.name);
+  }
+
+  return rules.map((rule) => ({
+    matchType: rule.matchType,
+    statusLabel: rule.statusId ? (statusIdToLabel.get(rule.statusId) ?? null) : null,
+    tags: rule.tags ?? null,
+    targetType: rule.targetType,
+    targetAgentName: rule.targetAgentId ? (agentIdToName.get(rule.targetAgentId) ?? null) : null,
+    targetTeamName: rule.targetTeamId ? (teamIdToName.get(rule.targetTeamId) ?? null) : null,
+    overrideExisting: rule.overrideExisting,
+    enabled: rule.enabled,
+  }));
 }
 
 function buildManifest(

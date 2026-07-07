@@ -62,6 +62,8 @@ describe('ProjectsService', () => {
     listScheduledEpics: jest.Mock;
     deleteScheduledEpic: jest.Mock;
     createScheduledEpic: jest.Mock;
+    listEpicAssignmentRules: jest.Mock;
+    deleteEpicAssignmentRule: jest.Mock;
     createWatcher: jest.Mock;
     createSubscriber: jest.Mock;
     deleteSubscriber: jest.Mock;
@@ -154,6 +156,8 @@ describe('ProjectsService', () => {
       listSubscribers: jest.fn().mockResolvedValue([]),
       listScheduledEpics: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       deleteScheduledEpic: jest.fn().mockResolvedValue(undefined),
+      listEpicAssignmentRules: jest.fn().mockResolvedValue([]),
+      deleteEpicAssignmentRule: jest.fn().mockResolvedValue(undefined),
       createScheduledEpic: jest.fn().mockImplementation(async (data) => ({
         id: `scheduled-epic-${Date.now()}`,
         ...data,

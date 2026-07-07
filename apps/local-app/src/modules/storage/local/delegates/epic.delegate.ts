@@ -31,6 +31,20 @@ import { BaseStorageDelegate, type StorageDelegateContext } from './base-storage
 
 const logger = createLogger('EpicStorageDelegate');
 
+/**
+ * Builds a raw-SQL fragment ` AND status_id NOT IN (?, ?, ...)` for the given
+ * terminal status ids, or an empty fragment when the list is empty. Used by the
+ * per-agent one-at-a-time delivery gate to exclude auto-clean/terminal epics.
+ */
+async function statusNotInList(statusIds: readonly string[]): Promise<SQL<unknown>> {
+  const { sql } = await import('drizzle-orm');
+  if (statusIds.length === 0) return sql``;
+  return sql` AND status_id NOT IN (${sql.join(
+    statusIds.map((s) => sql`${s}`),
+    sql`, `,
+  )})`;
+}
+
 export interface EpicStorageDelegateDependencies {
   createTag: (data: CreateTag) => Promise<Tag>;
   getAgent: (id: string) => Promise<Agent>;
@@ -67,6 +81,7 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
       data: data.data ?? null,
       skillsRequired: data.skillsRequired ?? null,
       tags: data.tags ?? [],
+      assignmentDeliveredAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -606,6 +621,7 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
           e.version,
           e.data,
           e.skills_required,
+          e.assignment_delivered_at,
           e.created_at,
           e.updated_at,
           ROW_NUMBER() OVER (
@@ -639,6 +655,7 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
       version: number;
       data: string | null;
       skills_required: string | null;
+      assignment_delivered_at: string | null;
       created_at: string;
       updated_at: string;
       row_num: number;
@@ -662,6 +679,7 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
         data: row.data ? JSON.parse(row.data) : null,
         skillsRequired: parseSkillsRequired(row.skills_required),
         tags: [], // Will be hydrated below
+        assignmentDeliveredAt: (row.assignment_delivered_at as string | null) ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
@@ -722,6 +740,73 @@ export class EpicStorageDelegate extends BaseStorageDelegate {
       .set({ statusId: newStatusId, updatedAt: now })
       .where(eq(epics.statusId, oldStatusId));
     return result.changes ?? 0;
+  }
+
+  async countDeliveredActiveEpicsForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ): Promise<number> {
+    const { sql } = await import('drizzle-orm');
+    const exclusion = await statusNotInList(terminalStatusIds);
+    const row = (await this.db.get(
+      sql`SELECT COUNT(*) as cnt FROM epics
+          WHERE agent_id = ${agentId}
+            AND project_id = ${projectId}
+            AND assignment_delivered_at IS NOT NULL${exclusion}`,
+    )) as { cnt: number } | undefined;
+    return Number(row?.cnt ?? 0);
+  }
+
+  async findOldestUndeliveredActiveEpicForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ): Promise<Epic | null> {
+    const { sql } = await import('drizzle-orm');
+    const exclusion = await statusNotInList(terminalStatusIds);
+    const rows = (await this.db.all(
+      sql`SELECT * FROM epics
+          WHERE agent_id = ${agentId}
+            AND project_id = ${projectId}
+            AND assignment_delivered_at IS NULL${exclusion}
+          ORDER BY created_at ASC LIMIT 1`,
+    )) as Array<Record<string, unknown>>;
+    if (rows.length === 0) return null;
+    return this.hydrateRawEpicRow(rows[0]);
+  }
+
+  async markAssignmentDelivered(epicId: string, deliveredAt?: string): Promise<void> {
+    const { epics } = await import('../../db/schema');
+    const { eq } = await import('drizzle-orm');
+    const ts = deliveredAt ?? new Date().toISOString();
+    await this.db.update(epics).set({ assignmentDeliveredAt: ts }).where(eq(epics.id, epicId));
+  }
+
+  async clearAssignmentDelivered(epicId: string): Promise<void> {
+    const { epics } = await import('../../db/schema');
+    const { eq } = await import('drizzle-orm');
+    await this.db.update(epics).set({ assignmentDeliveredAt: null }).where(eq(epics.id, epicId));
+  }
+
+  /** Convert a raw better-sqlite3 row (snake_case) into the Epic domain shape. */
+  private hydrateRawEpicRow(row: Record<string, unknown>): Epic {
+    return {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      title: row.title as string,
+      description: (row.description as string | null) ?? null,
+      statusId: row.status_id as string,
+      parentId: (row.parent_id as string | null) ?? null,
+      agentId: (row.agent_id as string | null) ?? null,
+      version: (row.version as number) ?? 1,
+      data: (row.data as Record<string, unknown> | null) ?? null,
+      skillsRequired: parseSkillsRequired(row.skills_required as string | null),
+      tags: [],
+      assignmentDeliveredAt: (row.assignment_delivered_at as string | null) ?? null,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    };
   }
 
   async listEpicComments(

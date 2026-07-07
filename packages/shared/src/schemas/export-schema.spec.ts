@@ -1070,4 +1070,143 @@ describe('ExportSchema', () => {
       }
     });
   });
+
+  describe('autoAssignRules', () => {
+    it('defaults to [] when absent', () => {
+      const result = ExportSchema.safeParse({ version: 1 });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.autoAssignRules).toEqual([]);
+      }
+    });
+
+    it('parses a valid status→agent rule', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          {
+            matchType: 'status',
+            statusLabel: 'Dispatch',
+            tags: null,
+            targetType: 'agent',
+            targetAgentName: 'Dispatcher',
+            targetTeamName: null,
+            overrideExisting: false,
+            enabled: true,
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.autoAssignRules).toHaveLength(1);
+        expect(result.data.autoAssignRules[0]).toMatchObject({
+          matchType: 'status',
+          statusLabel: 'Dispatch',
+          targetType: 'agent',
+          targetAgentName: 'Dispatcher',
+          overrideExisting: false,
+          enabled: true,
+        });
+      }
+    });
+
+    it('parses a valid tag→team rule', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          {
+            matchType: 'tag',
+            tags: ['frontend'],
+            targetType: 'team',
+            targetTeamName: 'Builders',
+          },
+        ],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.autoAssignRules[0].overrideExisting).toBe(false);
+        expect(result.data.autoAssignRules[0].enabled).toBe(true);
+      }
+    });
+
+    it('rejects status rule without statusLabel', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [{ matchType: 'status', targetType: 'agent', targetAgentName: 'X' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects status rule with empty-string statusLabel', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'status', statusLabel: '', targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects status rule with null statusLabel', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'status', statusLabel: null, targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects tag rule with null tags', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'tag', tags: null, targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects tag rule with empty tags', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          { matchType: 'tag', tags: [], targetType: 'agent', targetAgentName: 'X' },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects agent target without targetAgentName', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [{ matchType: 'status', statusLabel: 'New', targetType: 'agent' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects team target without targetTeamName', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [{ matchType: 'status', statusLabel: 'New', targetType: 'team' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects unknown keys (strict)', () => {
+      const result = ExportSchema.safeParse({
+        version: 1,
+        autoAssignRules: [
+          {
+            matchType: 'status',
+            statusLabel: 'New',
+            targetType: 'agent',
+            targetAgentName: 'X',
+            bogus: true,
+          },
+        ],
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });

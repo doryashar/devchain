@@ -218,12 +218,21 @@ export const epics = sqliteTable(
     version: integer('version').notNull().default(1),
     data: text('data', { mode: 'json' }), // JSON object
     skillsRequired: text('skills_required'),
+    // Per-agent delivery queue: NULL = assigned but not yet notified (queued),
+    // non-null timestamp = the [Epic Assignment] notification has been delivered.
+    // Enforces one-active-epic-at-a-time-per-agent via the EpicAssignmentNotifier pump.
+    assignmentDeliveredAt: text('assignment_delivered_at'),
     createdAt: text('created_at').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => ({
     parentIdIdx: index('epics_parent_id_idx').on(table.parentId),
     agentIdIdx: index('epics_agent_id_idx').on(table.agentId),
+    // Supports the "next queued epic for agent" lookup in the notifier pump.
+    agentDeliveryIdx: index('epics_agent_delivery_idx').on(
+      table.agentId,
+      table.assignmentDeliveredAt,
+    ),
     parentFk: foreignKey(() => ({
       columns: [table.parentId],
       foreignColumns: [table.id],
@@ -1084,9 +1093,7 @@ export const epicAssignmentRules = sqliteTable(
     targetType: text('target_type').notNull(), // 'agent' | 'team'
     targetAgentId: text('target_agent_id'), // set when targetType === 'agent'
     targetTeamId: text('target_team_id'), // set when targetType === 'team'
-    overrideExisting: integer('override_existing', { mode: 'boolean' })
-      .notNull()
-      .default(false),
+    overrideExisting: integer('override_existing', { mode: 'boolean' }).notNull().default(false),
     priority: integer('priority').notNull().default(0),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     createdAt: text('created_at').notNull(),
