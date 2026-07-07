@@ -348,6 +348,29 @@ export interface EpicStorage {
   countSubEpicsByStatus(parentId: string): Promise<Record<string, number>>;
   countEpicsByStatus(statusId: string): Promise<number>;
   updateEpicsStatus(oldStatusId: string, newStatusId: string): Promise<number>;
+  /**
+   * Number of epics assigned to `agentId` whose assignment notification has been
+   * delivered AND whose status is not in the supplied terminal set (i.e. the
+   * agent is actively working on them). Used by the per-agent one-at-a-time gate.
+   */
+  countDeliveredActiveEpicsForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ): Promise<number>;
+  /**
+   * Oldest (by createdAt) epic assigned to `agentId` whose notification has NOT
+   * been delivered yet and whose status is not terminal, or null if none queued.
+   */
+  findOldestUndeliveredActiveEpicForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ): Promise<Epic | null>;
+  /** Mark an epic's assignment notification as delivered (sets assignment_delivered_at). */
+  markAssignmentDelivered(epicId: string, deliveredAt?: string): Promise<void>;
+  /** Clear the delivered marker (e.g. when an epic is requeued / re-assigned). */
+  clearAssignmentDelivered(epicId: string): Promise<void>;
   listEpicComments(epicId: string, options?: ListOptions): Promise<ListResult<EpicComment>>;
   createEpicComment(data: CreateEpicComment): Promise<EpicComment>;
   deleteEpicComment(id: string): Promise<void>;
@@ -611,11 +634,17 @@ export interface ConnectorStorage {
 
   listStatusMappings(connectorId: string): Promise<ConnectorStatusMapping[]>;
   createStatusMapping(data: CreateConnectorStatusMapping): Promise<ConnectorStatusMapping>;
-  updateStatusMapping(id: string, data: UpdateConnectorStatusMapping): Promise<ConnectorStatusMapping>;
+  updateStatusMapping(
+    id: string,
+    data: UpdateConnectorStatusMapping,
+  ): Promise<ConnectorStatusMapping>;
   deleteStatusMapping(id: string): Promise<void>;
 
   getSyncState(connectorId: string, epicId: string): Promise<ConnectorSyncState | null>;
-  findSyncStateByExternalId(connectorId: string, externalId: string): Promise<ConnectorSyncState | null>;
+  findSyncStateByExternalId(
+    connectorId: string,
+    externalId: string,
+  ): Promise<ConnectorSyncState | null>;
   createSyncState(data: CreateConnectorSyncState): Promise<ConnectorSyncState>;
   updateSyncState(id: string, data: UpdateConnectorSyncState): Promise<ConnectorSyncState>;
   listSyncStates(connectorId: string): Promise<ConnectorSyncState[]>;

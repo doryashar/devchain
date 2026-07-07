@@ -470,6 +470,13 @@
       "when": 1782681923310,
       "tag": "0066_swift_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1783433605923,
+      "tag": "0067_flowery_cyclops",
+      "breakpoints": true
     }
   ]
 }

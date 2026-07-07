@@ -392,6 +392,38 @@ export class LocalStorageService implements StorageService {
     return this.epicDelegate.updateEpicsStatus(oldStatusId, newStatusId);
   }
 
+  async countDeliveredActiveEpicsForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ): Promise<number> {
+    return this.epicDelegate.countDeliveredActiveEpicsForAgent(
+      agentId,
+      projectId,
+      terminalStatusIds,
+    );
+  }
+
+  async findOldestUndeliveredActiveEpicForAgent(
+    agentId: string,
+    projectId: string,
+    terminalStatusIds: readonly string[],
+  ) {
+    return this.epicDelegate.findOldestUndeliveredActiveEpicForAgent(
+      agentId,
+      projectId,
+      terminalStatusIds,
+    );
+  }
+
+  async markAssignmentDelivered(epicId: string, deliveredAt?: string): Promise<void> {
+    return this.epicDelegate.markAssignmentDelivered(epicId, deliveredAt);
+  }
+
+  async clearAssignmentDelivered(epicId: string): Promise<void> {
+    return this.epicDelegate.clearAssignmentDelivered(epicId);
+  }
+
   async listEpicComments(
     epicId: string,
     options: ListOptions = {},
@@ -1078,9 +1110,7 @@ export class LocalStorageService implements StorageService {
     return this.connectorDelegate.listStatusMappings(connectorId);
   }
 
-  async createStatusMapping(
-    data: CreateConnectorStatusMapping,
-  ): Promise<ConnectorStatusMapping> {
+  async createStatusMapping(data: CreateConnectorStatusMapping): Promise<ConnectorStatusMapping> {
     return this.connectorDelegate.createStatusMapping(data);
   }
 
@@ -1095,10 +1125,7 @@ export class LocalStorageService implements StorageService {
     return this.connectorDelegate.deleteStatusMapping(id);
   }
 
-  async getSyncState(
-    connectorId: string,
-    epicId: string,
-  ): Promise<ConnectorSyncState | null> {
+  async getSyncState(connectorId: string, epicId: string): Promise<ConnectorSyncState | null> {
     return this.connectorDelegate.getSyncState(connectorId, epicId);
   }
 
@@ -1113,10 +1140,7 @@ export class LocalStorageService implements StorageService {
     return this.connectorDelegate.createSyncState(data);
   }
 
-  async updateSyncState(
-    id: string,
-    data: UpdateConnectorSyncState,
-  ): Promise<ConnectorSyncState> {
+  async updateSyncState(id: string, data: UpdateConnectorSyncState): Promise<ConnectorSyncState> {
     return this.connectorDelegate.updateSyncState(id, data);
   }
 
@@ -1128,9 +1152,7 @@ export class LocalStorageService implements StorageService {
     return this.connectorDelegate.listFieldMappings(connectorId);
   }
 
-  async createFieldMapping(
-    data: CreateConnectorFieldMapping,
-  ): Promise<ConnectorFieldMapping> {
+  async createFieldMapping(data: CreateConnectorFieldMapping): Promise<ConnectorFieldMapping> {
     return this.connectorDelegate.createFieldMapping(data);
   }
 

@@ -7,6 +7,7 @@ import { SettingsService } from '../../settings/services/settings.service';
 import { STORAGE_SERVICE, type StorageService } from '../../storage/interfaces/storage.interface';
 import { TeamsService } from '../../teams/services/teams.service';
 import { renderTemplate } from '../../../common/template/handlebars-renderer';
+import type { Epic } from '../../storage/models/domain.models';
 import type { EpicUpdatedEventPayload } from '../../events/catalog/epic.updated';
 import type { EpicCreatedEventPayload } from '../../events/catalog/epic.created';
 
@@ -25,6 +26,16 @@ const LEGACY_VARIABLES = [
   'is_team_lead',
 ];
 
+// Per-agent one-active-epic-at-a-time gate. An agent is ever only notified about
+// LIMIT active epics; the rest stay queued (assignment_delivered_at IS NULL) and
+// are auto-delivered by `pump()` when a currently-active epic is handed off or
+// completed. See docs/dispatcher-agent.md (and the assignment_delivered_at column).
+const MAX_CONCURRENT_EPICS_PER_AGENT = 1;
+
+// Safety bound on the pump loop; each iteration marks one epic delivered, so the
+// loop is naturally bounded by the queue size — this just guards against bugs.
+const PUMP_MAX_ITERATIONS = 50;
+
 @Injectable()
 export class EpicAssignmentNotifierSubscriber {
   private readonly logger = new Logger(EpicAssignmentNotifierSubscriber.name);
@@ -39,17 +50,8 @@ export class EpicAssignmentNotifierSubscriber {
 
   @OnEvent('epic.created', { async: true })
   async handleEpicCreated(payload: EpicCreatedEventPayload): Promise<void> {
-    // Only process if agent is assigned on creation
+    // Only process if an agent is assigned on creation
     if (!payload.agentId) {
-      return;
-    }
-
-    // Skip self-assignment (agent created epic assigned to themselves)
-    if (payload.actor?.type === 'agent' && payload.actor.id === payload.agentId) {
-      this.logger.debug(
-        { actorId: payload.actor.id, epicId: payload.epicId },
-        'Skipping notification: agent created epic assigned to itself',
-      );
       return;
     }
 
@@ -59,103 +61,43 @@ export class EpicAssignmentNotifierSubscriber {
     const startedAt = new Date().toISOString();
 
     try {
-      // Resolve actor (assigner) name for template placeholder
-      const assignerName = await this.resolveActorName(payload.actor);
-
-      const recipientIds = this.resolveCreatedRecipients(payload);
-      if (recipientIds.length === 0) {
+      // Self-assignment: the agent already knows (it created the epic for itself).
+      // Mark delivered so it counts toward their active set without a notification.
+      if (payload.actor?.type === 'agent' && payload.actor.id === payload.agentId) {
+        await this.storage.markAssignmentDelivered(payload.epicId);
+        this.logger.debug(
+          { actorId: payload.actor.id, epicId: payload.epicId },
+          'Self-assignment on create; marked delivered, skipping notification',
+        );
+        await this.recordOk(eventId, handler, startedAt, { selfAssigned: true });
         return;
       }
 
-      const teamCtx = await this.resolveTeamTemplateContext(payload.agentId, payload.projectId);
-
-      const template = this.resolveTemplate();
-      const message = renderTemplate(
-        template,
-        {
-          epic_id: payload.epicId,
-          agent_name: payload.agentName ?? payload.agentId,
-          epic_title: payload.epicTitle ?? payload.title,
-          project_name: payload.projectName ?? payload.projectId,
-          assigner_name: assignerName ?? 'System',
-          ...teamCtx,
-        },
-        LEGACY_VARIABLES,
+      // Newly created epic is queued (assignment_delivered_at IS NULL). Pumping the
+      // agent delivers it now if the agent is free, otherwise leaves it queued.
+      const res = await this.pump(
+        payload.agentId,
+        payload.projectId,
+        payload.actor,
+        'epic.created',
       );
-
-      const result = await this.messageDelivery.deliver(
-        recipientIds,
-        {
-          kind: 'pooled',
-          body: message,
-          source: 'epic.created',
-          projectId: payload.projectId,
-          senderName: 'System',
-        },
-        { submitKeys: ['Enter'] },
-      );
-
-      this.logger.debug(
-        { agentId: payload.agentId, recipientIds, status: result.status },
-        'EpicAssignmentNotifier: message delivered via AMD (epic.created)',
-      );
-
-      if (eventId) {
-        await this.eventLogService.recordHandledOk({
-          eventId,
-          handler,
-          detail: {
-            poolStatus: result.status,
-          },
-          startedAt,
-          endedAt: new Date().toISOString(),
-        });
-      }
-
-      this.logger.log(
-        { eventId, recipientIds, poolStatus: result.status },
-        'Notified agent about epic assignment (epic.created)',
-      );
+      await this.recordOk(eventId, handler, startedAt, {
+        deliveredThisEpic: res.deliveredEpicId === payload.epicId,
+      });
     } catch (error) {
       this.logger.error(
         { error, payload },
-        'Failed to notify agent about epic assignment (epic.created)',
+        'Failed to handle epic.created for assignment notification',
       );
-
-      if (eventId) {
-        await this.eventLogService.recordHandledFail({
-          eventId,
-          handler,
-          detail:
-            error instanceof Error
-              ? { message: error.message }
-              : { message: 'Unknown error', value: String(error) },
-          startedAt,
-          endedAt: new Date().toISOString(),
-        });
-      }
+      await this.recordFail(eventId, handler, startedAt, error);
     }
   }
 
   @OnEvent('epic.updated', { async: true })
   async handleEpicUpdated(payload: EpicUpdatedEventPayload): Promise<void> {
-    // Only process if agent assignment changed
-    if (!payload.changes.agentId) {
-      return;
-    }
-
-    // Only process new assignments, not unassignments (A→null)
-    const newAgentId = payload.changes.agentId.current;
-    if (newAgentId === null) {
-      return;
-    }
-
-    // Skip self-assignment (agent assigned epic to themselves)
-    if (payload.actor?.type === 'agent' && payload.actor.id === newAgentId) {
-      this.logger.debug(
-        { actorId: payload.actor.id, epicId: payload.epicId },
-        'Skipping notification: agent assigned epic to itself',
-      );
+    const agentChange = payload.changes.agentId;
+    const statusChange = payload.changes.statusId;
+    if (!agentChange && !statusChange) {
       return;
     }
 
@@ -165,80 +107,182 @@ export class EpicAssignmentNotifierSubscriber {
     const startedAt = new Date().toISOString();
 
     try {
-      const [agentName, projectName, epicTitle] = await this.resolveNames(payload, newAgentId);
-      // Resolve actor (assigner) name for template placeholder
-      const assignerName = await this.resolveActorName(payload.actor);
+      let detail: Record<string, unknown> = {};
 
-      const recipientIds = this.resolveUpdatedRecipients(payload, newAgentId);
-      if (recipientIds.length === 0) {
-        return;
+      if (agentChange) {
+        const prev = agentChange.previous;
+        const cur = agentChange.current;
+
+        // Assign-in: a (new) agent is now responsible for this epic.
+        if (cur !== null) {
+          const selfAssignment = payload.actor?.type === 'agent' && payload.actor.id === cur;
+          if (selfAssignment) {
+            await this.storage.markAssignmentDelivered(payload.epicId);
+            detail = { selfAssigned: true };
+            this.logger.debug(
+              { actorId: payload.actor!.id, epicId: payload.epicId },
+              'Self-assignment on update; marked delivered, skipping notification',
+            );
+          } else {
+            // Queue for the new agent: clear any marker left by a previous assignee
+            // so `pump` can deliver it (now or when the agent frees up).
+            await this.storage.clearAssignmentDelivered(payload.epicId);
+            const res = await this.pump(cur, payload.projectId, payload.actor, 'epic.assigned');
+            detail = { deliveredThisEpic: res.deliveredEpicId === payload.epicId };
+          }
+        }
+
+        // Free-out: a previous agent may now have capacity. Pump them so a queued
+        // epic (if any) gets delivered. Skip when prev === cur (no real change).
+        if (prev !== null && prev !== cur) {
+          await this.pump(prev, payload.projectId, payload.actor, 'epic.assigned');
+          detail = { ...detail, pumpedPreviousAgent: true };
+        }
+      } else if (statusChange) {
+        // Status changed without an agent change. The epic may have left the active
+        // set (e.g. moved to a non-auto-clean "done" status), freeing the agent —
+        // pump them so queued work can be delivered. (Moves to auto-clean statuses
+        // also clear agent_id, which shows up as an agentChange above.)
+        const epic = await this.storage.getEpic(payload.epicId).catch(() => null);
+        if (epic?.agentId) {
+          await this.pump(epic.agentId, payload.projectId, payload.actor, 'epic.assigned');
+          detail = { statusChangePump: true };
+        }
       }
 
-      const teamCtx = await this.resolveTeamTemplateContext(newAgentId, payload.projectId);
-
-      const template = this.resolveTemplate();
-      const message = renderTemplate(
-        template,
-        {
-          epic_id: payload.epicId,
-          agent_name: agentName ?? newAgentId,
-          epic_title: epicTitle ?? payload.epicId,
-          project_name: projectName ?? payload.projectId,
-          assigner_name: assignerName ?? 'System',
-          ...teamCtx,
-        },
-        LEGACY_VARIABLES,
-      );
-
-      const result = await this.messageDelivery.deliver(
-        recipientIds,
-        {
-          kind: 'pooled',
-          body: message,
-          source: 'epic.assigned', // Keep for UX continuity
-          projectId: payload.projectId,
-          senderName: 'System',
-        },
-        { submitKeys: ['Enter'] },
-      );
-
-      this.logger.debug(
-        { agentId: newAgentId, recipientIds, status: result.status },
-        'EpicAssignmentNotifier: message delivered via AMD',
-      );
-
-      if (eventId) {
-        await this.eventLogService.recordHandledOk({
-          eventId,
-          handler,
-          detail: {
-            poolStatus: result.status,
-          },
-          startedAt,
-          endedAt: new Date().toISOString(),
-        });
-      }
-
-      this.logger.log(
-        { eventId, recipientIds, poolStatus: result.status },
-        'Notified agent about epic assignment',
-      );
+      await this.recordOk(eventId, handler, startedAt, detail);
     } catch (error) {
-      this.logger.error({ error, payload }, 'Failed to notify agent about epic assignment');
+      this.logger.error({ error, payload }, 'Failed to handle epic.updated for assignment');
+      await this.recordFail(eventId, handler, startedAt, error);
+    }
+  }
 
-      if (eventId) {
-        await this.eventLogService.recordHandledFail({
-          eventId,
-          handler,
-          detail:
-            error instanceof Error
-              ? { message: error.message }
-              : { message: 'Unknown error', value: String(error) },
-          startedAt,
-          endedAt: new Date().toISOString(),
-        });
+  /**
+   * Deliver queued assignment notifications to `agentId` until it has
+   * MAX_CONCURRENT_EPICS_PER_AGENT active delivered epics, or the queue is empty.
+   * Returns the id of the last epic it delivered (or null), so callers can report
+   * whether the epic that triggered the pump was the one delivered.
+   */
+  private async pump(
+    agentId: string,
+    projectId: string,
+    actor: { type: 'agent' | 'guest'; id: string } | null | undefined,
+    source: string,
+  ): Promise<{ deliveredEpicId: string | null }> {
+    const terminalStatusIds = this.settingsService.getAutoCleanStatusIds(projectId);
+    let deliveredEpicId: string | null = null;
+
+    for (let i = 0; i < PUMP_MAX_ITERATIONS; i++) {
+      const deliveredActive = await this.storage.countDeliveredActiveEpicsForAgent(
+        agentId,
+        projectId,
+        terminalStatusIds,
+      );
+      if (deliveredActive >= MAX_CONCURRENT_EPICS_PER_AGENT) {
+        break;
+      }
+
+      const next = await this.storage.findOldestUndeliveredActiveEpicForAgent(
+        agentId,
+        projectId,
+        terminalStatusIds,
+      );
+      if (!next) {
+        break;
+      }
+
+      try {
+        await this.deliverAssignment(next, actor, source);
+        await this.storage.markAssignmentDelivered(next.id);
+        deliveredEpicId = next.id;
+        this.logger.log({ agentId, epicId: next.id }, 'Delivered queued epic assignment to agent');
+      } catch (error) {
+        // Delivery failed — leave undelivered so a future pump retries. Stop here
+        // to preserve FIFO order (don't deliver later epics before this one).
+        this.logger.error(
+          { error, agentId, epicId: next.id },
+          'Failed to deliver queued epic assignment; leaving queued',
+        );
+        break;
       }
     }
+
+    return { deliveredEpicId };
+  }
+
+  /** Render the [Epic Assignment] template for `epic` and deliver it to its agent. */
+  private async deliverAssignment(
+    epic: Epic,
+    actor: { type: 'agent' | 'guest'; id: string } | null | undefined,
+    source: string,
+  ): Promise<void> {
+    const [agent, project, assignerName, teamCtx] = await Promise.all([
+      this.storage.getAgent(epic.agentId!).catch(() => null),
+      this.storage.getProject(epic.projectId).catch(() => null),
+      this.resolveActorName(actor),
+      this.resolveTeamTemplateContext(epic.agentId!, epic.projectId),
+    ]);
+
+    const template = this.resolveTemplate();
+    const message = renderTemplate(
+      template,
+      {
+        epic_id: epic.id,
+        agent_name: agent?.name ?? epic.agentId!,
+        epic_title: epic.title,
+        project_name: project?.name ?? epic.projectId,
+        assigner_name: assignerName ?? 'System',
+        ...teamCtx,
+      },
+      LEGACY_VARIABLES,
+    );
+
+    await this.messageDelivery.deliver(
+      [epic.agentId!],
+      {
+        kind: 'pooled',
+        body: message,
+        source,
+        projectId: epic.projectId,
+        senderName: 'System',
+      },
+      { submitKeys: ['Enter'] },
+    );
+  }
+
+  private async recordOk(
+    eventId: string | undefined,
+    handler: string,
+    startedAt: string,
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    if (!eventId) return;
+    await this.eventLogService.recordHandledOk({
+      eventId,
+      handler,
+      detail,
+      startedAt,
+      endedAt: new Date().toISOString(),
+    });
+  }
+
+  private async recordFail(
+    eventId: string | undefined,
+    handler: string,
+    startedAt: string,
+    error: unknown,
+  ): Promise<void> {
+    if (!eventId) return;
+    await this.eventLogService.recordHandledFail({
+      eventId,
+      handler,
+      detail:
+        error instanceof Error
+          ? { message: error.message }
+          : { message: 'Unknown error', value: String(error) },
+      startedAt,
+      endedAt: new Date().toISOString(),
+    });
   }
 
   private resolveTemplate(): string {
@@ -264,51 +308,8 @@ export class EpicAssignmentNotifierSubscriber {
     return trimmed;
   }
 
-  private async resolveNames(
-    payload: EpicUpdatedEventPayload,
-    agentId: string,
-  ): Promise<[string?, string?, string?]> {
-    // Use resolved names from payload if available
-    const resolvedAgent = payload.changes.agentId?.currentName;
-    const resolvedProject = payload.projectName;
-    const resolvedEpic = payload.epicTitle;
-
-    if (resolvedAgent && resolvedProject && resolvedEpic) {
-      return [resolvedAgent, resolvedProject, resolvedEpic];
-    }
-
-    const [agent, project, epic] = await Promise.all([
-      resolvedAgent
-        ? null
-        : this.storage
-            .getAgent(agentId)
-            .then((value) => value.name)
-            .catch(() => null),
-      resolvedProject
-        ? null
-        : this.storage
-            .getProject(payload.projectId)
-            .then((value) => value.name)
-            .catch(() => null),
-      resolvedEpic
-        ? null
-        : this.storage
-            .getEpic(payload.epicId)
-            .then((value) => value.title)
-            .catch(() => null),
-    ]);
-
-    return [
-      resolvedAgent ?? agent ?? undefined,
-      resolvedProject ?? project ?? undefined,
-      resolvedEpic ?? epic ?? undefined,
-    ];
-  }
-
   /**
    * Resolves the name of the actor who triggered the event.
-   * @param actor - Actor from event payload
-   * @returns Actor name, or null if not found/unavailable
    */
   private async resolveActorName(
     actor: { type: 'agent' | 'guest'; id: string } | null | undefined,
@@ -326,25 +327,10 @@ export class EpicAssignmentNotifierSubscriber {
         return guest.name;
       }
     } catch {
-      // Actor lookup failed - return null
       return null;
     }
 
     return null;
-  }
-
-  private resolveCreatedRecipients(payload: EpicCreatedEventPayload): string[] {
-    return this.uniqueRecipientIds(
-      payload.assignmentRecipientIds ?? (payload.agentId ? [payload.agentId] : []),
-    );
-  }
-
-  private resolveUpdatedRecipients(payload: EpicUpdatedEventPayload, agentId: string): string[] {
-    return this.uniqueRecipientIds(payload.recipientIds ?? [agentId]);
-  }
-
-  private uniqueRecipientIds(recipientIds: readonly string[]): string[] {
-    return Array.from(new Set(recipientIds.filter((id) => id.length > 0)));
   }
 
   private async resolveTeamTemplateContext(

@@ -34,6 +34,7 @@ export interface Epic {
   data: Record<string, unknown> | null;
   skillsRequired: string[] | null;
   tags: string[];
+  assignmentDeliveredAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -232,7 +233,14 @@ export type UpdateStatus = Partial<Omit<Status, 'id' | 'createdAt' | 'updatedAt'
 
 export type CreateEpic = Omit<
   Epic,
-  'id' | 'version' | 'createdAt' | 'updatedAt' | 'parentId' | 'agentId' | 'skillsRequired'
+  | 'id'
+  | 'version'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'parentId'
+  | 'agentId'
+  | 'skillsRequired'
+  | 'assignmentDeliveredAt'
 > & {
   parentId?: string | null;
   agentId?: string | null;
@@ -512,10 +520,7 @@ export interface EpicAssignmentRule {
   updatedAt: string;
 }
 
-export type CreateEpicAssignmentRule = Omit<
-  EpicAssignmentRule,
-  'id' | 'createdAt' | 'updatedAt'
->;
+export type CreateEpicAssignmentRule = Omit<EpicAssignmentRule, 'id' | 'createdAt' | 'updatedAt'>;
 export type UpdateEpicAssignmentRule = Partial<CreateEpicAssignmentRule>;
 
 // ============================================
@@ -717,7 +722,9 @@ export interface Connector {
 }
 
 export type CreateConnector = Omit<Connector, 'id' | 'createdAt' | 'updatedAt'>;
-export type UpdateConnector = Partial<Omit<Connector, 'id' | 'projectId' | 'createdAt' | 'updatedAt'>>;
+export type UpdateConnector = Partial<
+  Omit<Connector, 'id' | 'projectId' | 'createdAt' | 'updatedAt'>
+>;
 
 export interface ConnectorStatusMapping {
   id: string;
@@ -729,7 +736,9 @@ export interface ConnectorStatusMapping {
 }
 
 export type CreateConnectorStatusMapping = Omit<ConnectorStatusMapping, 'id' | 'createdAt'>;
-export type UpdateConnectorStatusMapping = Partial<Omit<ConnectorStatusMapping, 'id' | 'connectorId' | 'createdAt'>>;
+export type UpdateConnectorStatusMapping = Partial<
+  Omit<ConnectorStatusMapping, 'id' | 'connectorId' | 'createdAt'>
+>;
 
 export interface ConnectorSyncState {
   id: string;
@@ -743,7 +752,9 @@ export interface ConnectorSyncState {
 }
 
 export type CreateConnectorSyncState = Omit<ConnectorSyncState, 'id' | 'createdAt' | 'updatedAt'>;
-export type UpdateConnectorSyncState = Partial<Omit<ConnectorSyncState, 'id' | 'createdAt' | 'updatedAt'>>;
+export type UpdateConnectorSyncState = Partial<
+  Omit<ConnectorSyncState, 'id' | 'createdAt' | 'updatedAt'>
+>;
 
 export interface ConnectorFieldMapping {
   id: string;
